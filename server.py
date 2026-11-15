@@ -18,7 +18,7 @@ DATA_DIR = BASE_DIR / "data" / "processed"
 STATIC_DIR = BASE_DIR / "static"
 MONTHLY_CSV_PATH = DATA_DIR / "agroshift_parcelas_monthly.csv"
 
-app = FastAPI(title="Cultiva API", version="2.1")
+app = FastAPI(title="Kultiva API", version="2.1")
 
 
 class SimulateRequest(BaseModel):

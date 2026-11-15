@@ -1,6 +1,6 @@
 {
-  "name": "Cultiva - Inteligencia Satelital NASA",
-  "short_name": "Cultiva",
+  "name": "Kultiva - Inteligencia Satelital NASA",
+  "short_name": "Kultiva",
   "description": "Diagnóstico satelital paso a paso con datos NASA (MODIS, GPM IMERG, MERRA-2) para agricultores de Coahuila.",
   "start_url": "/",
   "scope": "/",
