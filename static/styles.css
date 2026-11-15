@@ -979,6 +979,27 @@ select option, select optgroup { background: #1e2b16; color: #ffffff; }
   box-shadow: 0 0 0 1px rgba(163, 230, 53, 0.25);
 }
 .gibs-layer-btn .opacity-80, .choice-card .opacity-80, .choice-card .opacity-85 { opacity: 1; color: var(--txt-soft); }
+#pills-concern .choice-card { position: relative; }
+#pills-concern .concern-check {
+  position: absolute;
+  top: 0.55rem;
+  right: 0.55rem;
+  width: 20px;
+  height: 20px;
+  border-radius: 9999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  background: rgba(255, 255, 255, 0.08);
+  color: transparent;
+  transition: all 0.15s ease;
+}
+#pills-concern .choice-card.active .concern-check {
+  background: var(--lime);
+  border-color: var(--lime);
+  color: var(--forest);
+}
 
 /* ---------- Botones ---------- */
 .btn-ghost {

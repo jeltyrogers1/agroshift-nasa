@@ -1,0 +1,7 @@
+cultivo,tipo_rotacion,consumo_agua_mm,temp_min_c,temp_max_c,profundidad_raiz_cm,fija_nitrogeno,reduce_erosion,tolerancia_sequia,tolerancia_heladas,ciclo_siembra,beneficio_principal
+Maiz_Grano,Cultivo_Base_Principal,550,10,35,90,No,Baja,Media,Baja,Primavera-Verano,Alto rendimiento pero agota nitrogeno y deja suelo desnudo en invierno
+Frijol_Pinto,Leguminosa_Rotacion,350,12,32,60,Si,Media,Media,Baja,Primavera-Verano,Fija nitrogeno natural en el suelo y reduce uso de fertilizantes quimicos
+Avena_Forrajera,Cobertura_Invierno,280,2,26,70,No,Alta,Alta,Alta,Otono-Invierno,Cubre la parcela en meses secos evitando erosion por viento y conserva humedad
+Sorgo_Forrajero,Tolerante_Sequia,380,15,38,140,No,Media,Muy_Alta,Baja,Primavera-Verano,Raices profundas que aprovechan humedad del subsuelo con poco riego
+Alfalfa,Perenne_Regenerativo,750,0,34,200,Si,Muy_Alta,Media,Alta,Todo_el_ano,Mejora estructura del suelo a profundidad y aporta forraje continuo
+Cebada_Forrajera,Cobertura_Frio,260,0,25,65,No,Alta,Alta,Muy_Alta,Otono-Invierno,Ideal para zonas altas como Arteaga por su alta resistencia a heladas tardias

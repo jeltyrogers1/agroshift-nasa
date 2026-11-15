@@ -1,0 +1,4 @@
+zona,municipio,latitud,longitud,elevacion_msnm,tipo_suelo,textura,materia_organica_pct,retencion_agua,riesgo_erosion,pendiente_pct,problema_principal
+La_Narro,Saltillo,25.34,-101.01,1760,Xerosol_Calcico,Franco_Arcilloso,1.4,Media,Media,2.5,Escasez de agua en primavera y baja materia organica por monocultivo
+Los_Lirios,Arteaga,25.39,-100.58,2280,Feozem_Luvico,Franco_Limoso,2.8,Alta,Alta,6.5,Heladas tempranas/tardias y arrastre de suelo por lluvia en pendiente
+General_Cepeda,General_Cepeda,25.39,-101.45,1470,Regosol_Calcarico,Franco_Arenoso,0.9,Baja,Alta,1.8,Alta evaporacion por calor extremo y baja retencion de humedad superficial

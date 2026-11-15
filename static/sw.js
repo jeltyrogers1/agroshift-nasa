@@ -1,9 +1,9 @@
-const CACHE_NAME = "agroshift-pwa-v1";
+const CACHE_NAME = "agroshift-v2";
 const PRECACHE_URLS = [
   "/",
   "/static/index.html",
-  "/static/styles.css",
-  "/static/app.js",
+  "/static/styles.css?v=2",
+  "/static/app.js?v=2",
   "/static/manifest.json",
   "/static/logo-plantita.jpg"
 ];

@@ -51,7 +51,7 @@
     customCropWaterTier: "medio",
     fertilizerType: "quimico",
     tillageMode: "convencional",
-    mainConcern: "sequia",
+    mainConcerns: ["sequia"],
     editingSoil: false,
     soilOverride: null,
     activeMapLayer: "aerial",
@@ -850,7 +850,39 @@
     bindPills("pills-market", "marketGoal");
     bindPills("pills-fertilizer", "fertilizerType");
     bindPills("pills-tillage", "tillageMode");
-    bindPills("pills-concern", "mainConcern");
+
+    // Selección múltiple de problemas (mínimo 1 activo)
+    const concernBox = $("pills-concern");
+    if (concernBox) {
+      let minNoteTimer = null;
+      concernBox.querySelectorAll("button[data-value]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const val = btn.dataset.value;
+          const idx = state.mainConcerns.indexOf(val);
+          if (idx >= 0) {
+            if (state.mainConcerns.length <= 1) {
+              const note = $("concern-min-note");
+              if (note) {
+                note.classList.remove("hidden");
+                clearTimeout(minNoteTimer);
+                minNoteTimer = setTimeout(() => note.classList.add("hidden"), 2200);
+              }
+              return;
+            }
+            state.mainConcerns.splice(idx, 1);
+            btn.classList.remove("active");
+            btn.setAttribute("aria-pressed", "false");
+          } else {
+            state.mainConcerns.push(val);
+            btn.classList.add("active");
+            btn.setAttribute("aria-pressed", "true");
+          }
+          const note = $("concern-min-note");
+          if (note) note.classList.add("hidden");
+          scheduleSimulate(40);
+        });
+      });
+    }
 
     // Clima: Lluvia y Sequía
     $("sl-rain").addEventListener("input", (e) => {
@@ -1027,7 +1059,8 @@
           soil_override: state.soilOverride,
           fertilizer_type: state.fertilizerType,
           tillage_mode: state.tillageMode,
-          main_concern: state.mainConcern,
+          main_concern: state.mainConcerns,
+          selected_problems: state.mainConcerns,
         }),
       });
       if (!res.ok) throw new Error(await res.text());
@@ -1345,7 +1378,7 @@
         <div><b>Destino Productivo:</b> ${marketLabel}</div>
         <div><b>Fertilización Actual:</b> ${data.fertilizer_label || ctx.fertilizer_label || state.fertilizerType}</div>
         <div><b>Manejo de Rastrojo:</b> ${data.tillage_label || ctx.tillage_label || state.tillageMode}</div>
-        <div><b>Preocupación Principal:</b> ${data.main_concern_label || ctx.main_concern_label || state.mainConcern}</div>
+        <div><b>Preocupación Principal:</b> ${data.main_concern_label || ctx.main_concern_label || state.mainConcerns.join(", ")}</div>
         <div><b>Escenario Climático:</b> Lluvia ${state.rainPct === 0 ? "histórica normal" : `-${state.rainPct}%`
       } (${ctx.annual_simulated_rain_mm.toFixed(1)} mm/año) · Temperatura +${state.tempIncreaseC.toFixed(1)} °C</div>
       </div>

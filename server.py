@@ -37,7 +37,8 @@ class SimulateRequest(BaseModel):
     soil_override: dict[str, Any] | None = Field(default=None)
     fertilizer_type: str = Field(default="quimico")
     tillage_mode: str = Field(default="convencional")
-    main_concern: str = Field(default="sequia")
+    main_concern: str | list[str] = Field(default="sequia")
+    selected_problems: list[str] | None = Field(default=None)
 
 
 def _read_json(name: str) -> Any:
@@ -118,7 +119,7 @@ def api_simulate(req: SimulateRequest) -> dict[str, Any]:
             soil_override=req.soil_override,
             fertilizer_type=req.fertilizer_type,
             tillage_mode=req.tillage_mode,
-            main_concern=req.main_concern,
+            main_concern=req.selected_problems if req.selected_problems else req.main_concern,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

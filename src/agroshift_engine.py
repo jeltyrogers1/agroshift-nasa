@@ -914,7 +914,7 @@ def simulate_scenarios(
     soil_override: dict[str, Any] | None = None,
     fertilizer_type: str = "quimico",
     tillage_mode: str = "convencional",
-    main_concern: str = "sequia",
+    main_concern: str | list[str] = "sequia",
 ) -> dict[str, Any]:
     """
     Ejecuta el motor de simulación "What-If" de AgroShift a 3 años (6 ciclos)
@@ -958,11 +958,20 @@ def simulate_scenarios(
     tillage_mode = str(tillage_mode or "convencional").strip().lower()
     if tillage_mode not in TILLAGE_LABELS:
         tillage_mode = "convencional"
-    main_concern = str(main_concern or "sequia").strip().lower()
-    if main_concern not in CONCERN_LABELS:
-        main_concern = "sequia"
+    raw_concerns = main_concern if isinstance(main_concern, (list, tuple, set)) else str(main_concern or "sequia").split(",")
+    concerns: list[str] = []
+    for item in raw_concerns:
+        key = str(item or "").strip().lower()
+        if key in CONCERN_LABELS and key not in concerns:
+            concerns.append(key)
+    if not concerns:
+        concerns = ["sequia"]
 
     w_water, w_profit, w_nitrogen = _normalize_weights(weight_water, weight_profit, weight_nitrogen)
+    # Ajuste ponderado según problemas seleccionados
+    w_water_adj = w_water + (0.18 if "sequia" in concerns else 0.0)
+    w_nitrogen_adj = w_nitrogen + (0.18 if "suelo" in concerns else 0.0)
+    w_water, w_profit, w_nitrogen = _normalize_weights(w_water_adj, w_profit, w_nitrogen_adj)
 
     loc_clim_months = climatology["locations"][location_id]["months"]
     soil, is_custom_soil, base_elevation_m = _apply_soil_override(suelos[location_id], soil_override)
@@ -1135,34 +1144,37 @@ def simulate_scenarios(
             grain_count = sum(1 for c in active_crops if c in GRAIN_CROPS)
             market_alignment_bonus = 2.0 if grain_count >= 2 else 0.0
 
-        # Impulso de idoneidad según la preocupación principal del agricultor (main_concern)
+        # Impulso de idoneidad según los problemas seleccionados por el agricultor (concerns)
         concern_alignment_bonus = 0.0
-        if main_concern == "sequia":
-            if plan["plan_id"] == "plan_conservacion_hidrica":
-                concern_alignment_bonus = 4.2
-            elif plan["plan_id"] == "plan_regenerativo":
-                concern_alignment_bonus = 1.8
-            else:
-                concern_alignment_bonus = -3.0
-        elif main_concern == "suelo":
-            if plan["plan_id"] == "plan_regenerativo":
-                concern_alignment_bonus = 4.8
-            elif plan["plan_id"] == "plan_conservacion_hidrica":
-                concern_alignment_bonus = 2.0
-            else:
-                concern_alignment_bonus = -3.5
-        elif main_concern == "plagas":
-            if plan["semaforo_plagas"] == "VERDE":
-                concern_alignment_bonus = 3.8 if plan["plan_id"] == "plan_regenerativo" else 3.2
-            elif plan["semaforo_plagas"] == "ROJO":
-                concern_alignment_bonus = -4.0
-        elif main_concern == "heladas":
-            if plan["semaforo_heladas"] == "VERDE" and months_bare == 0:
-                concern_alignment_bonus = 3.8
-            elif months_bare == 0:
-                concern_alignment_bonus = 2.0
-            else:
-                concern_alignment_bonus = -3.0
+        for c in concerns:
+            if c == "sequia":
+                if plan["plan_id"] == "plan_conservacion_hidrica":
+                    concern_alignment_bonus += 4.2
+                elif plan["plan_id"] == "plan_regenerativo":
+                    concern_alignment_bonus += 1.8
+                else:
+                    concern_alignment_bonus -= 3.0
+            elif c == "suelo":
+                if plan["plan_id"] == "plan_regenerativo":
+                    concern_alignment_bonus += 4.8
+                elif plan["plan_id"] == "plan_conservacion_hidrica":
+                    concern_alignment_bonus += 2.0
+                else:
+                    concern_alignment_bonus -= 3.5
+            elif c == "plagas":
+                if plan["semaforo_plagas"] == "VERDE":
+                    concern_alignment_bonus += 3.8 if plan["plan_id"] == "plan_regenerativo" else 3.2
+                elif plan["semaforo_plagas"] == "ROJO":
+                    concern_alignment_bonus -= 4.0
+            elif c == "heladas":
+                if plan["semaforo_heladas"] == "VERDE" and months_bare == 0:
+                    concern_alignment_bonus += 3.8
+                elif months_bare == 0:
+                    concern_alignment_bonus += 2.0
+                else:
+                    concern_alignment_bonus -= 3.0
+        if len(concerns) > 1:
+            concern_alignment_bonus *= 0.75
 
         suitability = max(
             5.0,
@@ -1223,8 +1235,9 @@ def simulate_scenarios(
         "fertilizer_label": FERTILIZER_LABELS[fertilizer_type],
         "tillage_mode": tillage_mode,
         "tillage_label": TILLAGE_LABELS[tillage_mode],
-        "main_concern": main_concern,
-        "main_concern_label": CONCERN_LABELS[main_concern],
+        "main_concern": concerns[0] if len(concerns) == 1 else concerns,
+        "main_concerns": concerns,
+        "main_concern_label": " · ".join(CONCERN_LABELS[c] for c in concerns),
         "is_custom_soil": is_custom_soil,
         "normalized_weights": {
             "weight_water": round(w_water, 4),
@@ -1247,8 +1260,9 @@ def simulate_scenarios(
             "fertilizer_label": FERTILIZER_LABELS[fertilizer_type],
             "tillage_mode": tillage_mode,
             "tillage_label": TILLAGE_LABELS[tillage_mode],
-            "main_concern": main_concern,
-            "main_concern_label": CONCERN_LABELS[main_concern],
+            "main_concern": concerns[0] if len(concerns) == 1 else concerns,
+            "main_concerns": concerns,
+            "main_concern_label": " · ".join(CONCERN_LABELS[c] for c in concerns),
             "annual_historical_rain_mm": round(climate["rain_hist_annual_mm"], 1),
             "annual_simulated_rain_mm": round(climate["rain_adj_annual_mm"], 1),
             "annual_frost_days": round(climate["frost_days_annual"], 1),
