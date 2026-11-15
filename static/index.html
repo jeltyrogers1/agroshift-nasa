@@ -6,14 +6,14 @@
   <title>Kultiva | Diagnóstico Satelital Paso a Paso</title>
   <link rel="icon" href="/static/logo-Kultiva.png?v=3" />
   <link rel="manifest" href="/static/manifest.json" />
-  <meta name="theme-color" content="#1A2613" />
+  <meta name="theme-color" content="#0C120D" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="Kultiva" />
   <link rel="apple-touch-icon" href="/static/logo-Kultiva.png?v=3" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@600;700;800&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     tailwind.config = {
@@ -21,7 +21,7 @@
         extend: {
           fontFamily: {
             display: ['"Plus Jakarta Sans"', 'sans-serif'],
-            sans: ['Inter', 'sans-serif']
+            sans: ['"Plus Jakarta Sans"', 'sans-serif']
           }
         }
       }
@@ -29,7 +29,7 @@
   </script>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css" />
-  <link rel="stylesheet" href="/static/styles.css?v=kultiva" />
+  <link rel="stylesheet" href="/static/styles.css?v=minimal" />
 </head>
 <body class="text-white font-sans antialiased">
 
@@ -88,18 +88,18 @@
         <div class="card text-white p-5 space-y-4">
           <div class="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider bg-white/15 px-2.5 py-1 rounded-full">
             <i data-lucide="globe-2" class="w-3.5 h-3.5"></i>
-            <span>MODIS · GPM IMERG · MERRA-2 (2016–2026)</span>
+            <span>MODIS · GPM IMERG · MERRA-2</span>
           </div>
           <h1 class="font-display font-extrabold text-2xl leading-snug">
-            Protege tu tierra y tu cosecha con datos satelitales de la NASA
+            Protege tu cosecha con datos NASA
           </h1>
           <p class="text-sm text-emerald-50/90 leading-relaxed">
-            Simulador agronómico gratuito para agricultores de Coahuila. Descubre en <strong>1 minuto</strong> cómo ahorrar agua, regenerar tu suelo y ganar más en los próximos 3 años.
+            Ahorra agua, regenera tu suelo y gana más en 3 años.
           </p>
         </div>
 
         <div class="card space-y-3.5">
-          <h2 class="text-xs font-bold uppercase tracking-wider text-slate-400">¿Qué haremos en 1 minuto?</h2>
+          <h2 class="text-xs font-bold uppercase tracking-wider text-slate-400">En 1 minuto</h2>
 
           <div class="flex items-start gap-3.5">
             <div class="app-tile app-tile-green">
@@ -107,7 +107,7 @@
             </div>
             <div>
               <h3 class="font-display font-bold text-sm text-slate-900">1. Ubicar tu parcela</h3>
-              <p class="text-xs text-slate-600 mt-0.5 leading-relaxed">Elige tu región en Coahuila o dibuja los límites de tu terreno en el mapa satelital para conocer tu tipo de suelo.</p>
+              <p class="text-xs text-slate-600 mt-0.5 leading-relaxed">Elige tu zona o dibuja tu terreno en el mapa.</p>
             </div>
           </div>
 
@@ -116,8 +116,8 @@
               <i data-lucide="sprout" class="w-5 h-5"></i>
             </div>
             <div>
-              <h3 class="font-display font-bold text-sm text-slate-900">2. Analizar tu cultivo actual</h3>
-              <p class="text-xs text-slate-600 mt-0.5 leading-relaxed">Calculamos cuántos litros de agua consume tu cultivo hoy y qué riesgo enfrenta ante sequías, heladas y plagas.</p>
+              <h3 class="font-display font-bold text-sm text-slate-900">2. Analizar tu cultivo</h3>
+              <p class="text-xs text-slate-600 mt-0.5 leading-relaxed">Agua que consume y riesgo ante sequía, heladas y plagas.</p>
             </div>
           </div>
 
@@ -126,14 +126,14 @@
               <i data-lucide="trending-up" class="w-5 h-5"></i>
             </div>
             <div>
-              <h3 class="font-display font-bold text-sm text-slate-900">3. Comparar rotaciones más rentables</h3>
-              <p class="text-xs text-slate-600 mt-0.5 leading-relaxed">Mantenemos tu cultivo en el Año 1 y te proponemos rotaciones en los Años 2 y 3 que ahorran agua y aumentan tu utilidad.</p>
+              <h3 class="font-display font-bold text-sm text-slate-900">3. Comparar rotaciones</h3>
+              <p class="text-xs text-slate-600 mt-0.5 leading-relaxed">Tu cultivo en el Año 1; rotación en los Años 2 y 3.</p>
             </div>
           </div>
         </div>
 
         <p class="text-[11px] text-center text-slate-500 px-2">
-          Herramienta de apoyo a la decisión: complementa, pero nunca sustituye, el criterio del agricultor y del ingeniero agrónomo local.
+          Apoyo a la decisión: no sustituye al agrónomo local.
         </p>
       </section>
 
@@ -142,14 +142,14 @@
       =========================================== -->
       <section id="step-2" data-step="2" class="wizard-step hidden space-y-4">
         <div>
-          <span class="text-[11px] font-bold uppercase tracking-wider text-[#15803D]">Paso 2 de 6 · Ubicación y Suelo</span>
-          <h2 class="font-display font-extrabold text-xl text-slate-900 mt-0.5">Tu Terreno y Suelo</h2>
-          <p class="text-xs text-slate-600 mt-0.5">Selecciona la estación calibrada más cercana o traza tu polígono en el mapa.</p>
+          <span class="text-[11px] font-bold uppercase tracking-wider text-[#15803D]">Paso 2 de 6 · Ubicación</span>
+          <h2 class="font-display font-extrabold text-xl text-slate-900 mt-0.5">Tu terreno</h2>
+          <p class="text-xs text-slate-600 mt-0.5">Elige una zona o traza tu parcela.</p>
         </div>
 
         <!-- Selector táctil de las 3 zonas calibradas -->
         <div>
-          <label class="field-label">Zona calibrada en Coahuila</label>
+          <label class="field-label">Zona</label>
           <nav id="plot-tabs" class="grid grid-cols-1 gap-2" aria-label="Parcelas calibradas"></nav>
         </div>
 
@@ -158,7 +158,7 @@
           <div class="px-4 py-3 flex items-center justify-between gap-2 border-b border-[#E2E8F0]">
             <div class="flex items-center gap-2 min-w-0">
               <span class="app-tile app-tile-sm app-tile-indigo"><i data-lucide="map" class="w-4 h-4"></i></span>
-              <span class="font-display font-bold text-xs text-slate-800 truncate">Mapa satelital (dibuja tu parcela)</span>
+              <span class="font-display font-bold text-xs text-slate-800 truncate">Mapa satelital</span>
             </div>
             <button id="btn-clear-poly" class="btn-ghost hidden" type="button">
               <i data-lucide="eraser" class="w-3.5 h-3.5"></i>Borrar trazo
@@ -167,15 +167,15 @@
           <div id="map" class="h-[300px] w-full"></div>
           <div id="poly-info" class="hidden px-4 py-2 text-xs font-medium bg-[#ECFDF5] text-[#166534] border-t border-[#BBF7D0]"></div>
 
-          <!-- Barra de Capas Satelitales NASA GIBS + Leyenda Dinámica -->
+          <!-- Barra de Capas NASA GIBS + Leyenda Dinámica -->
           <div class="p-3.5 bg-slate-50/90 border-t border-[#E2E8F0] space-y-3">
             <div class="flex items-center justify-between gap-2">
               <span class="text-[11px] font-bold uppercase tracking-wider text-slate-600 flex items-center gap-1.5">
                 <i data-lucide="layers" class="w-3.5 h-3.5 text-[#0F5132]"></i>
-                <span>Capas Satelitales NASA GIBS</span>
+                <span>Capas NASA GIBS</span>
               </span>
               <span class="text-[10px] font-semibold text-emerald-800 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">
-                WMTS Oficial
+                WMTS
               </span>
             </div>
 
@@ -185,34 +185,34 @@
                 <span class="app-tile app-tile-sm app-tile-indigo"><i data-lucide="scan" class="w-4 h-4"></i></span>
                 <div class="text-left min-w-0">
                   <div class="font-display font-bold text-xs leading-tight">Vista Aérea</div>
-                  <div class="text-[10px] opacity-80 truncate">Esri World Imagery · Alta resolución para ubicar tu parcela</div>
+                  <div class="text-[10px] opacity-80 truncate">Esri World Imagery</div>
                 </div>
               </button>
 
               <button type="button" data-layer="lst" class="gibs-layer-btn transition-transform active:scale-95" aria-pressed="false">
                 <span class="app-tile app-tile-sm app-tile-amber"><i data-lucide="flame" class="w-4 h-4"></i></span>
                 <div class="text-left min-w-0">
-                  <div class="font-display font-bold text-xs leading-tight">Estrés Térmico (NASA Temperatura Superficial)</div>
-                  <div class="text-[10px] opacity-80 truncate">MODIS_Terra_Land_Surface_Temp_Day · Calor diurno (2026-05-15)</div>
+                  <div class="font-display font-bold text-xs leading-tight">Estrés térmico</div>
+                  <div class="text-[10px] opacity-80 truncate">MODIS Terra LST · 2026-05-15</div>
                 </div>
               </button>
             </div>
 
             <!-- Leyenda Dinámica Compacta -->
             <div id="map-layer-legend" class="bg-white rounded-xl border border-slate-200 p-3 text-xs text-slate-700 leading-snug">
-              Imagen satelital de alta resolución para ubicar tu parcela y trazar sus bordes.
+              Imagen de alta resolución para trazar tus bordes.
             </div>
           </div>
         </div>
 
         <!-- Input grande para Superficie (Hectáreas) -->
         <div class="card space-y-2">
-          <label for="input-ha" class="field-label">Superficie de tu parcela (Hectáreas)</label>
+          <label for="input-ha" class="field-label">Superficie (ha)</label>
           <div class="relative flex items-center">
             <input id="input-ha" type="number" min="0.5" max="50000" step="0.5" value="10" class="num-input text-lg pr-14" />
             <span class="absolute right-4 text-sm font-bold text-slate-400 pointer-events-none">ha</span>
           </div>
-          <p class="text-[11px] text-slate-500">Se actualiza automáticamente al dibujar un polígono en el mapa (máx. 50,000 ha).</p>
+          <p class="text-[11px] text-slate-500">Se actualiza al dibujar en el mapa · máx. 50,000 ha</p>
         </div>
 
         <!-- Ficha de Suelo Compacta (Editable por el agricultor) -->
@@ -220,9 +220,9 @@
           <div class="px-4 py-2.5 bg-slate-50 border-b border-[#E2E8F0] rounded-t-2xl flex flex-wrap items-center justify-between gap-2">
             <div class="flex flex-wrap items-center gap-2">
               <span class="app-tile app-tile-sm app-tile-green"><i data-lucide="layers" class="w-4 h-4"></i></span>
-              <span class="font-display font-bold text-xs text-slate-800">Diagnóstico de suelo en tu zona</span>
+              <span class="font-display font-bold text-xs text-slate-800">Suelo</span>
               <span id="soil-custom-badge" class="hidden inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-[#ECFDF5] text-[#0F5132] border border-[#BBF7D0]">
-                Datos personalizados en campo
+                Personalizado
               </span>
             </div>
             <div class="flex items-center gap-2">
@@ -236,7 +236,10 @@
             </div>
           </div>
           <div id="soil-metrics" class="grid grid-cols-2 divide-x divide-y divide-[#E2E8F0]"></div>
-          <p id="soil-problem" class="px-4 py-3 text-xs text-slate-600 border-t border-[#E2E8F0] bg-amber-50/50 rounded-b-2xl"></p>
+          <details id="soil-details" class="validation" style="border-bottom:0">
+            <summary><span>Ver diagnóstico del suelo</span></summary>
+            <p id="soil-problem" class="text-xs text-slate-600"></p>
+          </details>
         </div>
       </section>
 
@@ -245,14 +248,14 @@
       =========================================== -->
       <section id="step-3" data-step="3" class="wizard-step hidden space-y-4">
         <div>
-          <span class="text-[11px] font-bold uppercase tracking-wider text-[#15803D]">Paso 3 de 6 · Siembra y Prioridades</span>
-          <h2 class="font-display font-extrabold text-xl text-slate-900 mt-0.5">Tu Cultivo y Condiciones</h2>
-          <p class="text-xs text-slate-600 mt-0.5">Configura lo que siembras hoy y pon a prueba tu parcela ante el clima.</p>
+          <span class="text-[11px] font-bold uppercase tracking-wider text-[#15803D]">Paso 3 de 6 · Cultivo</span>
+          <h2 class="font-display font-extrabold text-xl text-slate-900 mt-0.5">Tu cultivo</h2>
+          <p class="text-xs text-slate-600 mt-0.5">Qué siembras y cómo lo pones a prueba.</p>
         </div>
 
         <!-- Selector grande de cultivo actual -->
         <div class="card space-y-2">
-          <label for="select-crop" class="field-label">¿Qué cultivas o necesitas sembrar hoy?</label>
+          <label for="select-crop" class="field-label">Cultivo actual</label>
           <select id="select-crop" class="num-input text-base">
             <option value="Maiz_Grano">Maíz Grano (Primavera-Verano)</option>
           </select>
@@ -271,14 +274,14 @@
             </div>
           </div>
           <p class="text-xs text-slate-500 leading-snug">
-            Usaremos este cultivo para calcular tu <strong>Plan Actual</strong> y lo mantendremos en el <strong>Año 1</strong> de tus planes de rotación.
+            Base de tu <strong>Plan Actual</strong> y del <strong>Año 1</strong>.
           </p>
         </div>
 
         <!-- Botones grandes tipo tarjeta: Régimen de agua y Destino -->
         <div class="card space-y-4">
           <div>
-            <span class="field-label">Régimen de agua en tu predio</span>
+            <span class="field-label">Régimen de agua</span>
             <div id="pills-irrigation" class="grid grid-cols-2 gap-2.5 mt-1" role="group" aria-label="Régimen de agua">
               <button type="button" data-value="temporal" class="choice-card active transition-transform active:scale-95" aria-pressed="true">
                 <span class="app-tile app-tile-water mb-1"><i data-lucide="cloud-rain" class="w-5 h-5"></i></span>
@@ -294,7 +297,7 @@
           </div>
 
           <div>
-            <span class="field-label">Destino de tu cosecha</span>
+            <span class="field-label">Destino</span>
             <div id="pills-market" class="grid grid-cols-2 gap-2.5 mt-1" role="group" aria-label="Destino productivo">
               <button type="button" data-value="grano" class="choice-card active transition-transform active:scale-95" aria-pressed="true">
                 <span class="app-tile app-tile-amber mb-1"><i data-lucide="package-check" class="w-5 h-5"></i></span>
@@ -313,8 +316,8 @@
         <!-- Sliders táctiles amplios de prioridades -->
         <div class="card space-y-5">
           <div>
-            <h3 class="font-display font-bold text-sm text-slate-900">¿Qué es más importante para ti?</h3>
-            <p class="text-xs text-slate-500 mt-0.5">Mueve las barras según tus metas en el campo.</p>
+            <h3 class="font-display font-bold text-sm text-slate-900">Tus prioridades</h3>
+            <p class="text-xs text-slate-500 mt-0.5">Ajusta según tus metas.</p>
           </div>
 
           <div>
@@ -342,14 +345,14 @@
           </div>
         </div>
 
-        <!-- Tarjeta destacada: Prueba Climática Extrema -->
-        <div class="rounded-2xl border border-[#BAE6FD] bg-[#F0F9FF] p-4 space-y-4">
+        <!-- Tarjeta destacada: Prueba climática -->
+        <div class="card space-y-4">
           <div class="flex items-start justify-between gap-2">
             <div class="flex items-start gap-2.5">
               <span class="app-tile app-tile-sm app-tile-amber"><i data-lucide="thermometer-sun" class="w-4 h-4"></i></span>
               <div>
-                <h3 class="font-display font-bold text-sm text-[#075985]">Prueba Climática Extrema</h3>
-                <p class="text-xs text-slate-600 mt-0.5">Activa escenarios rápidos o ajusta las barras para simular un mal año.</p>
+                <h3 class="font-display font-bold text-sm text-[#075985]">Prueba climática</h3>
+                <p class="text-xs text-slate-600 mt-0.5">Simula un mal año.</p>
               </div>
             </div>
           </div>
@@ -365,11 +368,11 @@
 
           <div class="space-y-3 pt-1">
             <div>
-              <div class="slider-row"><span class="text-xs text-slate-600">Reducción de lluvia (0% a -30%)</span><output id="out-rain">0%</output></div>
+              <div class="slider-row"><span class="text-xs text-slate-600">Menos lluvia (0 a -30%)</span><output id="out-rain">0%</output></div>
               <input id="sl-rain" type="range" min="0" max="30" value="0" class="range range-blue" aria-label="Reducción de lluvia" />
             </div>
             <div>
-              <div class="slider-row"><span class="text-xs text-slate-600">Aumento térmico (+0.0 a +3.0 °C)</span><output id="out-temp">+0.0 °C</output></div>
+              <div class="slider-row"><span class="text-xs text-slate-600">Más calor (+0 a +3 °C)</span><output id="out-temp">+0.0 °C</output></div>
               <input id="sl-temp" type="range" min="0" max="30" step="1" value="0" class="range range-heat" aria-label="Aumento de temperatura" />
             </div>
           </div>
@@ -382,19 +385,19 @@
       =========================================== -->
       <section id="step-4" data-step="4" class="wizard-step hidden space-y-4">
         <div>
-          <span class="text-[11px] font-bold uppercase tracking-wider text-[#15803D]">Paso 4 de 6 · Nutrición y Rastrojo</span>
-          <h2 class="font-display font-extrabold text-xl text-slate-900 mt-0.5">Manejo y Fertilización</h2>
-          <p class="text-xs text-slate-600 mt-0.5">Indica cómo nutres tu tierra y qué haces con el rastrojo para calcular tus ahorros en insumos.</p>
+          <span class="text-[11px] font-bold uppercase tracking-wider text-[#15803D]">Paso 4 de 6 · Manejo</span>
+          <h2 class="font-display font-extrabold text-xl text-slate-900 mt-0.5">Manejo</h2>
+          <p class="text-xs text-slate-600 mt-0.5">Fertilización, rastrojo y problemas.</p>
         </div>
 
-        <!-- 1. Tipo de fertilizante que usas actualmente -->
+        <!-- Fertilizante -->
         <div class="card space-y-3">
           <div>
             <span class="field-label flex items-center gap-1.5">
               <i data-lucide="flask-conical" class="w-4 h-4 text-[#0F5132]"></i>
-              <span>1. Tipo de fertilizante que usas actualmente</span>
+              <span>Fertilizante</span>
             </span>
-            <p class="text-xs text-slate-500">Permite estimar cuánto ahorrarías al rotar con leguminosas fijadoras de nitrógeno.</p>
+            <p class="text-xs text-slate-500">Estima el ahorro al rotar con leguminosas.</p>
           </div>
 
           <div id="pills-fertilizer" class="grid grid-cols-1 gap-2" role="group" aria-label="Tipo de fertilizante">
@@ -403,7 +406,7 @@
                 <span class="app-tile app-tile-amber"><i data-lucide="zap" class="w-5 h-5"></i></span>
                 <div class="min-w-0">
                   <div class="font-display font-bold text-sm">Fertilizante Químico (Urea / DAP)</div>
-                  <div class="text-xs opacity-85 mt-0.5 leading-snug">Alto costo de insumos y desgaste de suelo si no se rota.</div>
+                  <div class="text-xs opacity-85 mt-0.5 leading-snug">Alto costo y desgaste del suelo.</div>
                 </div>
               </div>
             </button>
@@ -412,7 +415,7 @@
               <div class="flex items-center gap-3 w-full">
                 <span class="app-tile app-tile-indigo"><i data-lucide="scale" class="w-5 h-5"></i></span>
                 <div class="min-w-0">
-                  <div class="font-display font-bold text-sm">Mixto (Químico + Abono Orgánico)</div>
+                  <div class="font-display font-bold text-sm">Mixto (químico + orgánico)</div>
                   <div class="text-xs opacity-85 mt-0.5 leading-snug">Balance nutricional moderado.</div>
                 </div>
               </div>
@@ -423,7 +426,7 @@
                 <span class="app-tile app-tile-green"><i data-lucide="leaf" class="w-5 h-5"></i></span>
                 <div class="min-w-0">
                   <div class="font-display font-bold text-sm">Orgánico / Composta / Biofertilizante</div>
-                  <div class="text-xs opacity-85 mt-0.5 leading-snug">Favorece retención de humedad y microbiología.</div>
+                  <div class="text-xs opacity-85 mt-0.5 leading-snug">Retiene humedad y microbiología.</div>
                 </div>
               </div>
             </button>
@@ -433,46 +436,46 @@
                 <span class="app-tile app-tile-amber"><i data-lucide="alert-circle" class="w-5 h-5"></i></span>
                 <div class="min-w-0">
                   <div class="font-display font-bold text-sm">Sin fertilización</div>
-                  <div class="text-xs opacity-85 mt-0.5 leading-snug">Riesgo de agotamiento de nutrientes en ciclos continuos.</div>
+                  <div class="text-xs opacity-85 mt-0.5 leading-snug">Riesgo de agotar nutrientes.</div>
                 </div>
               </div>
             </button>
           </div>
         </div>
 
-        <!-- 2. Manejo del rastrojo después de cosechar -->
+        <!-- Rastrojo -->
         <div class="card space-y-3">
           <div>
             <span class="field-label flex items-center gap-1.5">
               <i data-lucide="layers" class="w-4 h-4 text-[#0F5132]"></i>
-              <span>2. Manejo del rastrojo después de cosechar</span>
+              <span>Rastrojo</span>
             </span>
-            <p class="text-xs text-slate-500">Define la protección superficial del suelo frente a la evaporación y la erosión.</p>
+            <p class="text-xs text-slate-500">Protección contra evaporación y erosión.</p>
           </div>
 
           <div id="pills-tillage" class="grid grid-cols-2 gap-2.5" role="group" aria-label="Manejo del rastrojo">
             <button type="button" data-value="convencional" class="choice-card active transition-transform active:scale-95" aria-pressed="true">
               <span class="app-tile app-tile-amber mb-1"><i data-lucide="tractor" class="w-5 h-5"></i></span>
-              <span class="font-display font-bold text-xs leading-snug">Labranza tradicional / Suelo limpio</span>
-              <span class="text-[11px] opacity-80">Barbecho expuesto al sol</span>
+              <span class="font-display font-bold text-xs leading-snug">Labranza tradicional</span>
+              <span class="text-[11px] opacity-80">Suelo expuesto</span>
             </button>
             <button type="button" data-value="conservacion" class="choice-card transition-transform active:scale-95" aria-pressed="false">
               <span class="app-tile app-tile-green mb-1"><i data-lucide="shield-check" class="w-5 h-5"></i></span>
-              <span class="font-display font-bold text-xs leading-snug">Dejar rastrojo como cobertura</span>
-              <span class="text-[11px] opacity-80">Conserva humedad y frena erosión</span>
+              <span class="font-display font-bold text-xs leading-snug">Rastrojo como cobertura</span>
+              <span class="text-[11px] opacity-80">Conserva humedad</span>
             </button>
           </div>
         </div>
 
-        <!-- 3. Principal problema que enfrentas hoy en tu parcela -->
+        <!-- Problemas en tu parcela -->
         <div class="card space-y-3">
           <div>
             <span class="field-label flex items-center gap-1.5">
               <i data-lucide="crosshair" class="w-4 h-4 text-[#0F5132]"></i>
-              <span>3. Principal problema que enfrentas hoy en tu parcela</span>
+              <span>Problemas en tu parcela</span>
             </span>
-            <p class="text-xs text-slate-500">Selecciona uno o varios problemas (puedes marcar 1, 2, 3 o los 4).</p>
-            <p id="concern-min-note" class="hidden text-[11px] font-medium text-amber-300 mt-1">Debes mantener al menos un problema seleccionado.</p>
+            <p class="text-xs text-slate-500">Elige uno o varios.</p>
+            <p id="concern-min-note" class="hidden text-[11px] font-medium text-amber-300 mt-1">Mantén al menos uno seleccionado.</p>
           </div>
 
           <div id="pills-concern" class="grid grid-cols-2 gap-2" role="group" aria-label="Problemas principales en parcela">
@@ -506,9 +509,9 @@
       <section id="step-5" data-step="5" class="wizard-step hidden space-y-4">
         <div class="flex items-start justify-between gap-2">
           <div>
-            <span class="text-[11px] font-bold uppercase tracking-wider text-amber-700">Paso 5 de 6 · Diagnóstico Actual</span>
-            <h2 class="font-display font-extrabold text-xl text-slate-900 mt-0.5">¿Qué pasa si no rotas tu cultivo?</h2>
-            <p class="text-xs text-slate-600 mt-0.5">Resultado proyectado a 3 años si repites tu cultivo actual sin descanso ni cobertura.</p>
+            <span class="text-[11px] font-bold uppercase tracking-wider text-amber-700">Paso 5 de 6 · Diagnóstico</span>
+            <h2 class="font-display font-extrabold text-xl text-slate-900 mt-0.5">Si no rotas</h2>
+            <p class="text-xs text-slate-600 mt-0.5">Proyección a 3 años repitiendo tu cultivo.</p>
           </div>
           <span id="loading" class="text-xs font-semibold text-[#0284C7] bg-sky-50 px-2.5 py-1 rounded-full hidden">Calculando...</span>
         </div>
@@ -519,7 +522,7 @@
         <!-- Gráfica Histórica NASA -->
         <div class="card space-y-3">
           <div>
-            <h3 class="card-title"><span class="app-tile app-tile-sm app-tile-indigo"><i data-lucide="line-chart" class="w-4 h-4"></i></span>Evidencia Satelital NASA en tu Parcela</h3>
+            <h3 class="card-title"><span class="app-tile app-tile-sm app-tile-indigo"><i data-lucide="line-chart" class="w-4 h-4"></i></span>Evidencia satelital NASA</h3>
             <p id="chart-subtitle" class="text-xs text-slate-500 mt-1 leading-relaxed"></p>
           </div>
 
@@ -529,7 +532,10 @@
           </div>
 
           <div class="h-[260px]"><canvas id="nasa-chart"></canvas></div>
-          <div id="nasa-context-bar" class="grid grid-cols-1 gap-2.5 pt-2 border-t border-[#E2E8F0]"></div>
+          <details class="validation">
+            <summary><span>Ver fundamento técnico NASA</span></summary>
+            <div id="nasa-context-bar" class="grid grid-cols-1 gap-2.5 detail-body"></div>
+          </details>
         </div>
       </section>
 
@@ -538,10 +544,10 @@
       =========================================== -->
       <section id="step-6" data-step="6" class="wizard-step hidden space-y-4">
         <div>
-          <span class="text-[11px] font-bold uppercase tracking-wider text-[#15803D]">Paso 6 de 6 · Plan de Acción a 3 Años</span>
-          <h2 class="font-display font-extrabold text-xl text-slate-900 mt-0.5">Tus Opciones de Rotación</h2>
+          <span class="text-[11px] font-bold uppercase tracking-wider text-[#15803D]">Paso 6 de 6 · Plan a 3 años</span>
+          <h2 class="font-display font-extrabold text-xl text-slate-900 mt-0.5">Tus rotaciones</h2>
           <p class="text-xs text-slate-600 mt-0.5">
-            Ambos planes <strong>respetan tu cultivo en el Año 1</strong> y rotan en los Años 2 y 3 para ahorrar agua y multiplicar tu ganancia.
+            Año 1 sin cambios; rotación en los Años 2 y 3.
           </p>
         </div>
 
@@ -551,17 +557,17 @@
         <!-- Botón Final: Exportar Plan para Campo -->
         <div class="card text-white space-y-3">
           <div class="flex items-start gap-3">
-            <div class="w-10 h-10 rounded-xl bg-white/10 flex items-center justify-center shrink-0">
+            <div class="w-6 h-6 flex items-center justify-center shrink-0">
               <i data-lucide="file-check-2" class="w-5 h-5 text-emerald-300"></i>
             </div>
             <div>
-              <h3 class="font-display font-bold text-sm">¿Listo para llevar este plan al campo?</h3>
-              <p class="text-xs text-emerald-100/80 mt-0.5">Genera una hoja técnica limpia lista para imprimir o guardar en PDF y revísala con tu ingeniero agrónomo.</p>
+              <h3 class="font-display font-bold text-sm">Llévalo al campo</h3>
+              <p class="text-xs text-emerald-100/80 mt-0.5">Hoja lista para imprimir o guardar en PDF.</p>
             </div>
           </div>
           <button id="btn-export" type="button" class="w-full py-3.5 px-4 rounded-xl bg-white text-[#0F5132] font-display font-extrabold text-sm flex items-center justify-center gap-2 shadow-sm hover:bg-emerald-50">
             <i data-lucide="printer" class="w-4 h-4"></i>
-            <span>Exportar Plan para Campo (PDF / Imprimir)</span>
+            <span>Exportar plan (PDF)</span>
           </button>
         </div>
       </section>
@@ -590,7 +596,7 @@
       <div class="flex items-start justify-between gap-3 mb-3">
         <div>
           <h2 id="fusion-title" class="font-display font-extrabold text-lg text-slate-900">Fusión de Datos NASA</h2>
-          <p class="text-xs text-slate-500 mt-0.5">Cómo unimos satélites de distinta resolución con el suelo de tu parcela.</p>
+          <p class="text-xs text-slate-500 mt-0.5">Satélites + suelo de tu parcela.</p>
         </div>
         <button id="btn-close-fusion" type="button" class="btn-ghost" aria-label="Cerrar"><i data-lucide="x" class="w-4 h-4"></i>Cerrar</button>
       </div>
@@ -628,7 +634,7 @@
 
       <div class="disclaimer">
         <i data-lucide="info" class="w-4 h-4 shrink-0 mt-0.5"></i>
-        <p>Herramienta de apoyo a la decisión: complementa, pero nunca sustituye, el criterio del agricultor y del ingeniero agrónomo local.</p>
+        <p>Apoyo a la decisión: no sustituye al agrónomo local.</p>
       </div>
     </div>
   </div>
@@ -641,6 +647,6 @@
   <script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@turf/turf@6/turf.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-  <script src="/static/app.js?v=kultiva"></script>
+  <script src="/static/app.js?v=minimal"></script>
 </body>
 </html>

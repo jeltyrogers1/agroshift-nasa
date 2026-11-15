@@ -21,12 +21,12 @@
   };
 
   const NEXT_BUTTON_LABELS = {
-    1: "Comenzar Diagnóstico",
-    2: "Siguiente: Tu Cultivo",
-    3: "Siguiente: Fertilización",
-    4: "Calcular Diagnóstico NASA",
-    5: "Ver Soluciones Recomendadas",
-    6: "Exportar Plan para Campo",
+    1: "Comenzar",
+    2: "Siguiente",
+    3: "Siguiente",
+    4: "Calcular diagnóstico",
+    5: "Ver rotaciones",
+    6: "Exportar plan",
   };
 
   const state = {
@@ -549,7 +549,7 @@
       legendEl.innerHTML = `
         <div class="space-y-2">
           <div class="flex items-center justify-between text-[11px] font-bold text-slate-800">
-            <span>Estrés Térmico (NASA Temperatura Superficial)</span>
+            <span>Estrés térmico</span>
             <span class="text-[10px] font-semibold text-rose-800 bg-rose-50 px-1.5 py-0.5 rounded border border-rose-200">${GIBS_LST_DATE}</span>
           </div>
           <div class="legend-gradient-lst w-full"></div>
@@ -564,7 +564,7 @@
       legendEl.innerHTML = `
         <div class="flex items-center gap-2 text-slate-600">
           <i data-lucide="satellite" class="w-4 h-4 text-[#0F5132] shrink-0"></i>
-          <span>Imagen satelital de alta resolución para ubicar tu parcela y trazar sus bordes.</span>
+          <span>Imagen de alta resolución para trazar tus bordes.</span>
         </div>
       `;
     }
@@ -1124,23 +1124,41 @@
     const regimeShort = state.irrigationMode === "riego" ? "Riego de Auxilio" : "Solo Temporal";
 
     $("baseline-card").innerHTML = `
-      <article class="card plan-card border-amber-300 bg-amber-50/20">
-        <div class="flex items-start justify-between gap-2">
-          <div>
-            <span class="inline-flex items-center gap-1 text-[11px] font-bold uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-900">
-              Línea Base · Sin Rotación
-            </span>
-            <h3 class="plan-name mt-1.5">${basePlan.plan_name}</h3>
-            <p class="plan-focus">${NUM.format(state.hectares)} ha en ${data.zona_label} · ${regimeShort}</p>
+      <article class="card plan-card">
+        <div class="flex items-start justify-between gap-3">
+          <div class="min-w-0">
+            <span class="alt-tag">Línea base · sin rotación</span>
+            <h3 class="plan-name mt-3">${basePlan.plan_name}</h3>
+            <p class="plan-focus">${NUM.format(state.hectares)} ha · ${data.zona_label} · ${regimeShort}</p>
           </div>
-          <div class="text-right">
-            <div class="score-big text-amber-800">${Math.round(basePlan.suitability_score)}%</div>
+          <div class="text-right shrink-0">
+            <div class="score-big">${Math.round(basePlan.suitability_score)}%</div>
             <div class="score-sub">viabilidad</div>
           </div>
         </div>
 
+        <div class="kpi-divider">
+          <div class="stat-box">
+            <div class="lbl">Consumo de agua · 3 años</div>
+            <div class="val">${NUM.format(Math.round(basePlan.consumo_agua_total_3a_m3 || 0))} m³</div>
+            <div class="text-[11px] mt-1">${NUM.format(Math.round(basePlan.consumo_agua_litros || 0))} L · ${NUM.format(Math.round(basePlan.demanda_agua_efectiva_3a_mm || 0))} mm</div>
+          </div>
+          <div class="kpi-row">
+            <div class="stat-box">
+              <div class="lbl">Utilidad neta</div>
+              <div class="val" style="font-size:1.35rem">${CURRENCY.format(basePlan.ingreso_neto_total_mxn)}</div>
+              <div class="text-[11px] mt-1">${CURRENCY.format(basePlan.ingreso_neto_ha_3a_mxn)} / ha</div>
+            </div>
+            <div class="stat-box">
+              <div class="lbl">Suelo cubierto</div>
+              <div class="val" style="font-size:1.35rem">${bal.meses_suelo_protegido_3a}/36 m</div>
+              <div class="text-[11px] mt-1">${bal.meses_suelo_desnudo_3a} meses desnudo</div>
+            </div>
+          </div>
+        </div>
+
         <div>
-          <div class="text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1.5">Semáforos de Riesgo a 3 Años</div>
+          <div class="field-label">Riesgo a 3 años</div>
           <div class="traffic-grid">
             ${trafficBox("Sequía", basePlan.semaforo_sequia)}
             ${trafficBox("Heladas", basePlan.semaforo_heladas)}
@@ -1148,46 +1166,27 @@
           </div>
         </div>
 
-        <div class="grid grid-cols-1 gap-2">
-          <div class="stat-box bg-white">
-            <div class="lbl">CONSUMO HÍDRICO TOTAL (LÍNEA BASE 3 AÑOS)</div>
-            <div class="val text-[#0284C7] text-lg">${NUM.format(Math.round(basePlan.consumo_agua_litros || 0))} L</div>
-            <div class="text-[11px] text-slate-500 mt-0.5">Equivalente a ${NUM.format(
-      Math.round(basePlan.consumo_agua_total_3a_m3 || 0)
-    )} m³ (${NUM.format(Math.round(basePlan.demanda_agua_efectiva_3a_mm || 0))} mm)</div>
-          </div>
-          <div class="grid grid-cols-2 gap-2">
-            <div class="stat-box bg-white">
-              <div class="lbl">Utilidad Neta (3 años)</div>
-              <div class="val text-slate-900">${CURRENCY.format(basePlan.ingreso_neto_total_mxn)}</div>
-              <div class="text-[11px] text-slate-500 mt-0.5">${CURRENCY.format(basePlan.ingreso_neto_ha_3a_mxn)} / ha</div>
-            </div>
-            <div class="stat-box bg-white">
-              <div class="lbl">Cobertura del Suelo</div>
-              <div class="val text-slate-900">${bal.meses_suelo_protegido_3a}/36 meses</div>
-              <div class="text-[11px] text-rose-700 font-medium mt-0.5">${bal.meses_suelo_desnudo_3a} meses suelo desnudo</div>
-            </div>
-          </div>
-        </div>
-
         <div>
-          <div class="text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1.5">Calendario Actual (3 Años)</div>
-          <div class="table-scroll">
-            <table class="mini-table">
-              <thead><tr><th>Ciclo</th><th>Primavera-Verano</th><th>Otoño-Invierno</th></tr></thead>
-              <tbody>${rows}</tbody>
-            </table>
-          </div>
+          <details class="validation">
+            <summary><span>Ver fundamento técnico NASA</span></summary>
+            <div class="detail-body">
+              <div>
+                <div class="field-label">Calendario actual</div>
+                <div class="table-scroll">
+                  <table class="mini-table">
+                    <thead><tr><th>Ciclo</th><th>Primavera-Verano</th><th>Otoño-Invierno</th></tr></thead>
+                    <tbody>${rows}</tbody>
+                  </table>
+                </div>
+              </div>
+              <p class="nasa-note">${formatEvidenceText(basePlan.nasa_evidence_summary)}</p>
+            </div>
+          </details>
+          <details class="validation">
+            <summary><span>¿Qué no ve el satélite?</span></summary>
+            <ul>${validationNotes}</ul>
+          </details>
         </div>
-
-        <p class="nasa-note">${formatEvidenceText(basePlan.nasa_evidence_summary)}</p>
-
-        <details class="validation">
-          <summary>
-            <span>¿Qué no ve el satélite? (Validación local requerida)</span>
-          </summary>
-          <ul>${validationNotes}</ul>
-        </details>
       </article>
     `;
     icons();
@@ -1225,14 +1224,14 @@
         return `
         <article class="card plan-card ${isOptimal ? "best" : ""}">
           ${isOptimal
-            ? `<div class="best-tag"><i data-lucide="award" class="w-3.5 h-3.5"></i> MEJOR OPCIÓN PARA TU PARCELA</div>`
-            : `<div class="alt-tag"><i data-lucide="check-circle-2" class="w-3.5 h-3.5"></i> PRIMERA ALTERNATIVA · BUENA OPCIÓN</div>`
+            ? `<div class="best-tag"><i data-lucide="award" class="w-3.5 h-3.5"></i> Mejor opción</div>`
+            : `<div class="alt-tag"><i data-lucide="check-circle-2" class="w-3.5 h-3.5"></i> Primera alternativa</div>`
           }
 
-          <div class="flex items-start justify-between gap-2">
-            <div>
+          <div class="flex items-start justify-between gap-3">
+            <div class="min-w-0">
               <h3 class="plan-name">${p.plan_name}</h3>
-              <p class="plan-focus">${p.strategy_focus}</p>
+              <p class="plan-focus">${NUM.format(state.hectares)} ha · ${p.strategy_focus}</p>
             </div>
             <div class="text-right shrink-0">
               <div class="score-big">${Math.round(p.suitability_score)}%</div>
@@ -1240,55 +1239,56 @@
             </div>
           </div>
 
-          <!-- Beneficio directo frente al Plan Actual -->
-          <div class="grid grid-cols-1 gap-2">
-            <div class="stat-box ${isOptimal ? "bg-emerald-50/80 border-emerald-300" : "bg-slate-50"}">
-              <div class="lbl">Utilidad Neta Estimada (3 años)</div>
-              <div class="val text-[#0F5132] text-lg">${CURRENCY.format(p.ingreso_neto_total_mxn)}</div>
-              <div class="text-xs font-bold text-emerald-700 mt-0.5">${extraMoneyStr}</div>
+          <div class="kpi-divider">
+            <div class="stat-box">
+              <div class="lbl">Utilidad neta · 3 años</div>
+              <div class="val">${CURRENCY.format(p.ingreso_neto_total_mxn)}</div>
+              <div class="text-[11px] mt-1">${extraMoneyStr}</div>
             </div>
-
-            <div class="grid grid-cols-2 gap-2">
-              <div class="stat-box bg-white">
-                <div class="lbl">AGUA AHORRADA</div>
-                <div class="val text-[#0284C7]">${NUM.format(Math.round(p.ahorro_agua_litros || 0))} L</div>
-                <div class="text-[11px] text-slate-500 mt-0.5">${NUM.format(
-            Math.round(p.ahorro_agua_m3 || 0)
-          )} m³ menos que no rotar</div>
+            <div class="kpi-row">
+              <div class="stat-box">
+                <div class="lbl">Agua ahorrada</div>
+                <div class="val" style="font-size:1.35rem">${NUM.format(Math.round(p.ahorro_agua_m3 || 0))} m³</div>
+                <div class="text-[11px] mt-1">${NUM.format(Math.round(p.ahorro_agua_litros || 0))} L</div>
               </div>
-              <div class="stat-box bg-white">
-                <div class="lbl">Salud del Suelo</div>
-                <div class="val text-slate-900">${bal.ciclos_fijacion_nitrogeno_3a} ciclos N</div>
-                <div class="text-[11px] text-emerald-700 font-semibold mt-0.5">${bal.meses_suelo_protegido_3a
-          }/36 meses cubierto</div>
+              <div class="stat-box">
+                <div class="lbl">Salud del suelo</div>
+                <div class="val" style="font-size:1.35rem">${bal.ciclos_fijacion_nitrogeno_3a} ciclos N</div>
+                <div class="text-[11px] mt-1">${bal.meses_suelo_protegido_3a}/36 meses cubierto</div>
               </div>
             </div>
           </div>
 
           <div>
-            <div class="text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1.5">Rotación Paso a Paso (3 Años)</div>
-            <div class="table-scroll">
-              <table class="mini-table">
-                <thead><tr><th>Año</th><th>Primavera-Verano</th><th>Otoño-Invierno</th></tr></thead>
-                <tbody>${rows}</tbody>
-              </table>
+            <div class="field-label">Riesgo a 3 años</div>
+            <div class="traffic-grid">
+              ${trafficBox("Sequía", p.semaforo_sequia)}
+              ${trafficBox("Heladas", p.semaforo_heladas)}
+              ${trafficBox("Plagas", p.semaforo_plagas)}
             </div>
           </div>
 
-          <div class="traffic-grid">
-            ${trafficBox("Sequía", p.semaforo_sequia)}
-            ${trafficBox("Heladas", p.semaforo_heladas)}
-            ${trafficBox("Plagas", p.semaforo_plagas)}
+          <div>
+            <details class="validation">
+              <summary><span>Ver rotación y fundamento técnico NASA</span></summary>
+              <div class="detail-body">
+                <div>
+                  <div class="field-label">Rotación paso a paso</div>
+                  <div class="table-scroll">
+                    <table class="mini-table">
+                      <thead><tr><th>Año</th><th>Primavera-Verano</th><th>Otoño-Invierno</th></tr></thead>
+                      <tbody>${rows}</tbody>
+                    </table>
+                  </div>
+                </div>
+                <p class="nasa-note">${formatEvidenceText(p.nasa_evidence_summary)}</p>
+              </div>
+            </details>
+            <details class="validation">
+              <summary><span>Incertidumbres y validación local</span></summary>
+              <ul>${validationNotes}</ul>
+            </details>
           </div>
-
-          <p class="nasa-note">${formatEvidenceText(p.nasa_evidence_summary)}</p>
-
-          <details class="validation" open>
-            <summary>
-              <span>Incertidumbres y Validación Local (¿Qué no ve el satélite?)</span>
-            </summary>
-            <ul>${validationNotes}</ul>
-          </details>
         </article>`;
       })
       .join("");
@@ -1457,10 +1457,10 @@
     );
     if (isHistory) {
       $("chart-subtitle").innerHTML =
-        `${locName} — Serie observada (2016–2026, 130 meses): Lluvia GPM/IMERG ${gpmTip} vs. Verdor MODIS NDVI ${ndviTip}`;
+        `${locName} · 2016–2026 · Lluvia GPM ${gpmTip} vs. NDVI ${ndviTip}`;
     } else {
       $("chart-subtitle").innerHTML =
-        `${locName} — Ciclo promedio (12 meses): Lluvia GPM/IMERG ${gpmTip} vs. Verdor MODIS NDVI ${ndviTip}`;
+        `${locName} · 12 meses · Lluvia GPM ${gpmTip} vs. NDVI ${ndviTip}`;
     }
   }
 
