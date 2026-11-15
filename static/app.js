@@ -96,7 +96,19 @@
 
     for (let i = 1; i <= TOTAL_STEPS; i++) {
       const sec = $(`step-${i}`);
-      if (sec) sec.classList.toggle("hidden", i !== target);
+      if (!sec) continue;
+      const isTarget = i === target;
+      sec.classList.toggle("hidden", !isTarget);
+      if (isTarget) {
+        sec.classList.remove("step-enter");
+        void sec.offsetWidth;
+        sec.classList.add("step-enter");
+        sec.onanimationend = (e) => {
+          if (e.target === sec) sec.classList.remove("step-enter");
+        };
+      } else {
+        sec.classList.remove("step-enter");
+      }
     }
 
     $("step-counter").textContent = `Paso ${target} de ${TOTAL_STEPS}`;
@@ -1097,6 +1109,106 @@
       </div>`;
   }
 
+  const kpiRafIds = new WeakMap();
+
+  function animateKPIs(container, duration = 550) {
+    if (!container) return;
+    const prevId = kpiRafIds.get(container);
+    if (prevId) cancelAnimationFrame(prevId);
+
+    const nodes = Array.from(container.querySelectorAll("[data-kpi-target]"));
+    if (!nodes.length) return;
+
+    const prefersReduced =
+      window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+    const fmtCache = new Map();
+    const getFmt = (kind, decimals) => {
+      if (kind === "currency") return CURRENCY;
+      if (decimals === 0) return NUM;
+      if (decimals === 1) return DEC1;
+      const key = `n_${decimals}`;
+      if (!fmtCache.has(key)) {
+        fmtCache.set(
+          key,
+          new Intl.NumberFormat("es-MX", {
+            minimumFractionDigits: decimals,
+            maximumFractionDigits: decimals,
+          })
+        );
+      }
+      return fmtCache.get(key);
+    };
+
+    const items = nodes.map((el) => {
+      const target = Number(el.dataset.kpiTarget);
+      const kind = el.dataset.kpiKind || "num";
+      const suffix = el.dataset.kpiSuffix || "";
+      const decimals = Number(el.dataset.kpiDecimals || 0);
+      const fmt = getFmt(kind, decimals);
+      const factor = Math.pow(10, decimals);
+      return {
+        el,
+        target: Number.isFinite(target) ? target : 0,
+        decimals,
+        factor,
+        fmt,
+        suffix,
+      };
+    });
+
+    const formatItem = (item, val) => {
+      const rounded = item.decimals > 0 ? Math.round(val * item.factor) / item.factor || 0 : Math.round(val) || 0;
+      return item.fmt.format(rounded) + item.suffix;
+    };
+
+    if (prefersReduced) {
+      for (let i = 0; i < items.length; i++) {
+        items[i].el.textContent = formatItem(items[i], items[i].target);
+      }
+      return;
+    }
+
+    for (let i = 0; i < items.length; i++) {
+      items[i].el.textContent = formatItem(items[i], 0);
+    }
+
+    const start = performance.now();
+    const tick = (now) => {
+      const progress = Math.min(1, (now - start) / duration);
+      const inv = 1 - progress;
+      const eased = 1 - inv * inv * inv;
+
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        const current = progress >= 1 ? item.target : item.target * eased;
+        item.el.textContent = formatItem(item, current);
+      }
+
+      if (progress < 1) {
+        kpiRafIds.set(container, requestAnimationFrame(tick));
+      } else {
+        kpiRafIds.delete(container);
+      }
+    };
+
+    kpiRafIds.set(container, requestAnimationFrame(tick));
+  }
+
+  function getHectareDisplay() {
+    const haStr = String(state.hectares);
+    const decimals = haStr.includes(".") ? Math.min(2, haStr.split(".")[1].length) : 0;
+    const text =
+      decimals === 0
+        ? NUM.format(state.hectares)
+        : decimals === 1
+        ? DEC1.format(state.hectares)
+        : new Intl.NumberFormat("es-MX", { minimumFractionDigits: decimals, maximumFractionDigits: decimals }).format(
+            state.hectares
+          );
+    return { val: state.hectares, decimals, text: `${text} ha` };
+  }
+
   /* ---------- Step 4: Diagnóstico de tu Plan Actual (Línea Base) ---------- */
   function renderBaseline(data) {
     const ctx = data.parcel_context;
@@ -1122,14 +1234,18 @@
       .join("");
 
     const regimeShort = state.irrigationMode === "riego" ? "Riego de Auxilio" : "Solo Temporal";
+    const haInfo = getHectareDisplay();
+    const waterM3 = Math.round(basePlan.consumo_agua_total_3a_m3 || 0);
+    const netMxn = Math.round(basePlan.ingreso_neto_total_mxn || 0);
 
-    $("baseline-card").innerHTML = `
-      <article class="card plan-card">
+    const baselineEl = $("baseline-card");
+    baselineEl.innerHTML = `
+      <article class="card plan-card result-enter" style="animation-delay: 0ms">
         <div class="flex items-start justify-between gap-3">
           <div class="min-w-0">
             <span class="alt-tag">Línea base · sin rotación</span>
             <h3 class="plan-name mt-3">${basePlan.plan_name}</h3>
-            <p class="plan-focus">${NUM.format(state.hectares)} ha · ${data.zona_label} · ${regimeShort}</p>
+            <p class="plan-focus"><span data-kpi-target="${haInfo.val}" data-kpi-kind="num" data-kpi-decimals="${haInfo.decimals}" data-kpi-suffix=" ha">${haInfo.text}</span> · ${data.zona_label} · ${regimeShort}</p>
           </div>
           <div class="text-right shrink-0">
             <div class="score-big">${Math.round(basePlan.suitability_score)}%</div>
@@ -1138,15 +1254,15 @@
         </div>
 
         <div class="kpi-divider">
-          <div class="stat-box">
+          <div class="stat-box result-enter" style="animation-delay: 70ms">
             <div class="lbl">Consumo de agua · 3 años</div>
-            <div class="val">${NUM.format(Math.round(basePlan.consumo_agua_total_3a_m3 || 0))} m³</div>
+            <div class="val"><span data-kpi-target="${waterM3}" data-kpi-kind="num" data-kpi-suffix=" m³">${NUM.format(waterM3)} m³</span></div>
             <div class="text-[11px] mt-1">${NUM.format(Math.round(basePlan.consumo_agua_litros || 0))} L · ${NUM.format(Math.round(basePlan.demanda_agua_efectiva_3a_mm || 0))} mm</div>
           </div>
-          <div class="kpi-row">
+          <div class="kpi-row result-enter" style="animation-delay: 140ms">
             <div class="stat-box">
               <div class="lbl">Utilidad neta</div>
-              <div class="val" style="font-size:1.35rem">${CURRENCY.format(basePlan.ingreso_neto_total_mxn)}</div>
+              <div class="val" style="font-size:1.35rem"><span data-kpi-target="${netMxn}" data-kpi-kind="currency">${CURRENCY.format(netMxn)}</span></div>
               <div class="text-[11px] mt-1">${CURRENCY.format(basePlan.ingreso_neto_ha_3a_mxn)} / ha</div>
             </div>
             <div class="stat-box">
@@ -1157,7 +1273,7 @@
           </div>
         </div>
 
-        <div>
+        <div class="result-enter" style="animation-delay: 140ms">
           <div class="field-label">Riesgo a 3 años</div>
           <div class="traffic-grid">
             ${trafficBox("Sequía", basePlan.semaforo_sequia)}
@@ -1190,6 +1306,7 @@
       </article>
     `;
     icons();
+    animateKPIs(baselineEl);
   }
 
   /* ---------- Step 5: Tus Opciones de Rotación (De lo Bueno a lo Óptimo) ---------- */
@@ -1199,16 +1316,21 @@
 
     // Ordenar de menor a mayor suitability_score: primero la Primera Alternativa (buena), debajo la Mejor Opción (óptima)
     const sorted = [...alternatives].sort((a, b) => a.suitability_score - b.suitability_score);
+    const haInfo = getHectareDisplay();
+    const plansEl = $("plans");
 
-    $("plans").innerHTML = sorted
+    plansEl.innerHTML = sorted
       .map((p, idx) => {
         const isOptimal = idx === sorted.length - 1;
+        const delayMs = [0, 70, 140][idx] ?? idx * 70;
         const bal = p.balance_nitrogeno_y_cobertura || {};
         const extraMoney = p.ingreso_neto_total_mxn - (basePlan ? basePlan.ingreso_neto_total_mxn : 0);
         const extraMoneyStr =
           extraMoney >= 0
             ? `+${CURRENCY.format(extraMoney)} extra vs. tu plan actual`
             : `${CURRENCY.format(extraMoney)} vs. tu plan actual`;
+        const netMxn = Math.round(p.ingreso_neto_total_mxn || 0);
+        const savedWaterM3 = Math.round(p.ahorro_agua_m3 || 0);
 
         const rows = p.years
           .map(
@@ -1222,7 +1344,7 @@
           .join("");
 
         return `
-        <article class="card plan-card ${isOptimal ? "best" : ""}">
+        <article class="card plan-card ${isOptimal ? "best" : ""} result-enter" style="animation-delay: ${delayMs}ms">
           ${isOptimal
             ? `<div class="best-tag"><i data-lucide="award" class="w-3.5 h-3.5"></i> Mejor opción</div>`
             : `<div class="alt-tag"><i data-lucide="check-circle-2" class="w-3.5 h-3.5"></i> Primera alternativa</div>`
@@ -1231,7 +1353,7 @@
           <div class="flex items-start justify-between gap-3">
             <div class="min-w-0">
               <h3 class="plan-name">${p.plan_name}</h3>
-              <p class="plan-focus">${NUM.format(state.hectares)} ha · ${p.strategy_focus}</p>
+              <p class="plan-focus"><span data-kpi-target="${haInfo.val}" data-kpi-kind="num" data-kpi-decimals="${haInfo.decimals}" data-kpi-suffix=" ha">${haInfo.text}</span> · ${p.strategy_focus}</p>
             </div>
             <div class="text-right shrink-0">
               <div class="score-big">${Math.round(p.suitability_score)}%</div>
@@ -1242,13 +1364,13 @@
           <div class="kpi-divider">
             <div class="stat-box">
               <div class="lbl">Utilidad neta · 3 años</div>
-              <div class="val">${CURRENCY.format(p.ingreso_neto_total_mxn)}</div>
+              <div class="val"><span data-kpi-target="${netMxn}" data-kpi-kind="currency">${CURRENCY.format(netMxn)}</span></div>
               <div class="text-[11px] mt-1">${extraMoneyStr}</div>
             </div>
             <div class="kpi-row">
               <div class="stat-box">
                 <div class="lbl">Agua ahorrada</div>
-                <div class="val" style="font-size:1.35rem">${NUM.format(Math.round(p.ahorro_agua_m3 || 0))} m³</div>
+                <div class="val" style="font-size:1.35rem"><span data-kpi-target="${savedWaterM3}" data-kpi-kind="num" data-kpi-suffix=" m³">${NUM.format(savedWaterM3)} m³</span></div>
                 <div class="text-[11px] mt-1">${NUM.format(Math.round(p.ahorro_agua_litros || 0))} L</div>
               </div>
               <div class="stat-box">
@@ -1292,7 +1414,17 @@
         </article>`;
       })
       .join("");
+
+    const exportCard = document.querySelector("#step-6 > .card");
+    if (exportCard) {
+      exportCard.classList.remove("result-enter");
+      void exportCard.offsetWidth;
+      exportCard.style.animationDelay = `${Math.min(sorted.length, 2) * 70}ms`;
+      exportCard.classList.add("result-enter");
+    }
+
     icons();
+    animateKPIs(plansEl);
   }
 
   /* ---------- Print Sheet (Exportar Plan para Campo) ---------- */

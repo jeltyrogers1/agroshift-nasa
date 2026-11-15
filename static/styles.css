@@ -1238,6 +1238,7 @@ body *, input, select, button, output, table { font-family: inherit; font-varian
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
   box-shadow: none;
+  transition: transform 100ms ease;
 }
 .step-pill::before {
   content: "";
@@ -1247,12 +1248,28 @@ body *, input, select, button, output, table { font-family: inherit; font-varian
   margin-top: -1.5px;
   border-radius: 3px;
   background: var(--hairline-strong);
-  transition: background 0.2s ease;
+  transition: none;
+}
+.step-pill::after {
+  content: "";
+  position: absolute;
+  left: 0; right: 0; top: 50%;
+  height: 3px;
+  margin-top: -1.5px;
+  border-radius: 3px;
+  background: var(--lime);
+  box-shadow: 0 0 8px rgba(163, 230, 53, 0.45);
+  transform: scaleX(0);
+  transform-origin: left center;
+  opacity: 0;
+  transition: transform 380ms cubic-bezier(0.22, 1, 0.36, 1), opacity 220ms ease;
+  pointer-events: none;
+  will-change: transform, opacity;
 }
 .step-pill.done { background: transparent; border: 0; }
-.step-pill.done::before { background: rgba(255, 255, 255, 0.45); }
+.step-pill.done::after { transform: scaleX(1); opacity: 0.55; }
 .step-pill.active { background: transparent; border: 0; box-shadow: none; }
-.step-pill.active::before { background: var(--lime); }
+.step-pill.active::after { transform: scaleX(1); opacity: 1; }
 #app-shell .progress-track { display: none; }
 
 /* ---------- Tarjetas: superficie plana, hairline, sin sombra ---------- */
@@ -1515,16 +1532,199 @@ select option, select optgroup { background: #111912; }
   flex-shrink: 0;
   border-right: 1.5px solid var(--txt-soft);
   border-bottom: 1.5px solid var(--txt-soft);
-  transform: rotate(45deg) translateY(-2px);
-  transition: transform 0.2s ease;
+  transform-origin: center;
+  transform: translateY(-2px) rotate(45deg);
+  transition: transform 220ms ease;
   font-size: 0;
   color: transparent;
 }
-.validation[open] summary::after { content: ""; transform: rotate(-135deg) translateY(-2px); color: transparent; }
+.validation[open] summary::after { content: ""; transform: translateY(2px) rotate(225deg); color: transparent; }
 .validation > :not(summary) { padding-bottom: 6px; }
+.validation[open] > :not(summary) {
+  animation: detailsFadeIn 220ms cubic-bezier(0.22, 1, 0.36, 1) backwards;
+}
 .validation ul { padding: 0 0 12px 18px; font-size: 0.8125rem; line-height: 1.6; color: var(--txt-soft); }
 .validation .detail-body { padding: 0 0 14px; }
 .validation .detail-body > * + * { margin-top: 20px; }
+
+/* ---------- Micro-interacciones y Motion (GPU 60 FPS) ---------- */
+@keyframes stepEnter {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes resultEnter {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes detailsFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes iconPop {
+  0% { transform: scale(1) rotate(0deg); }
+  40% { transform: scale(1.24) rotate(-10deg); }
+  75% { transform: scale(0.92) rotate(5deg); }
+  100% { transform: scale(1) rotate(0deg); }
+}
+@keyframes radarPulse {
+  0% {
+    transform: scale(1);
+    opacity: 0.75;
+  }
+  70% {
+    transform: scale(2.8);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(2.8);
+    opacity: 0;
+  }
+}
+
+#app-shell main > section.step-enter {
+  animation: stepEnter 260ms cubic-bezier(0.22, 1, 0.36, 1) backwards;
+  will-change: transform, opacity;
+}
+#app-shell .result-enter {
+  animation: resultEnter 300ms cubic-bezier(0.22, 1, 0.36, 1) backwards;
+  will-change: transform, opacity;
+}
+
+/* Badge NASA con pulso de telemetría */
+.nasa-dot {
+  position: relative;
+  width: 6px;
+  height: 6px;
+  border-radius: 9999px;
+  background: var(--lime);
+  flex-shrink: 0;
+}
+.nasa-dot::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  background: var(--lime);
+  animation: radarPulse 2.5s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+  pointer-events: none;
+  will-change: transform, opacity;
+}
+
+/* Respuesta táctil GPU-composited en botones, tarjetas seleccionables y acordeones */
+#app-shell .step-pill,
+:is(#app-shell, #modal-fusion) .btn-primary-lg,
+:is(#app-shell, #modal-fusion) .btn-nav-primary,
+:is(#app-shell, #modal-fusion) .btn-nav-secondary,
+:is(#app-shell, #modal-fusion) #btn-export,
+:is(#app-shell, #modal-fusion) .glass-btn,
+:is(#app-shell, #modal-fusion) .btn-ghost,
+:is(#app-shell, #modal-fusion) #btn-edit-soil,
+:is(#app-shell, #modal-fusion) #btn-reset-soil,
+:is(#app-shell, #modal-fusion) .btn-toggle,
+:is(#app-shell, #modal-fusion) .btn-toggle-heat,
+:is(#app-shell, #modal-fusion) .seg-tab,
+:is(#app-shell, #modal-fusion) .choice-card,
+:is(#app-shell, #modal-fusion) .zone-btn,
+:is(#app-shell, #modal-fusion) .gibs-layer-btn,
+:is(#app-shell, #modal-fusion) .validation > summary {
+  transition: transform 100ms ease, opacity 150ms ease;
+}
+
+#app-shell .step-pill:active,
+:is(#app-shell, #modal-fusion) .btn-primary-lg:active,
+:is(#app-shell, #modal-fusion) .btn-nav-primary:active,
+:is(#app-shell, #modal-fusion) .btn-nav-secondary:active,
+:is(#app-shell, #modal-fusion) #btn-export:active,
+:is(#app-shell, #modal-fusion) .glass-btn:active,
+:is(#app-shell, #modal-fusion) .btn-ghost:active,
+:is(#app-shell, #modal-fusion) #btn-edit-soil:active,
+:is(#app-shell, #modal-fusion) .btn-toggle:active,
+:is(#app-shell, #modal-fusion) .btn-toggle-heat:active,
+:is(#app-shell, #modal-fusion) .seg-tab:active,
+:is(#app-shell, #modal-fusion) .choice-card:active,
+:is(#app-shell, #modal-fusion) .zone-btn:active,
+:is(#app-shell, #modal-fusion) .gibs-layer-btn:active,
+:is(#app-shell, #modal-fusion) .validation > summary:active {
+  transform: scale(0.97);
+  transition: transform 100ms ease;
+}
+
+/* Tarjetas de problemas: pop del ícono SVG + escala suave del badge ✓ */
+#app-shell #pills-concern .choice-card.active .app-tile svg {
+  animation: iconPop 350ms cubic-bezier(0.22, 1, 0.36, 1) 1;
+  will-change: transform;
+}
+#app-shell #pills-concern .concern-check {
+  border-color: var(--hairline-strong);
+  background: transparent;
+  color: transparent;
+  transition: none;
+}
+#app-shell #pills-concern .concern-check::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border-radius: 9999px;
+  background: var(--lime);
+  opacity: 0;
+  transform: scale(0.4);
+  transition: transform 240ms cubic-bezier(0.34, 1.56, 0.64, 1), opacity 180ms ease;
+  pointer-events: none;
+  will-change: transform, opacity;
+}
+#app-shell #pills-concern .concern-check svg {
+  position: relative;
+  z-index: 1;
+  color: var(--forest);
+  opacity: 0;
+  transform: scale(0.4);
+  transition: transform 240ms cubic-bezier(0.34, 1.56, 0.64, 1), opacity 180ms ease;
+  will-change: transform, opacity;
+}
+#app-shell #pills-concern .choice-card.active .concern-check {
+  background: transparent;
+  border-color: var(--hairline-strong);
+  color: var(--forest);
+}
+#app-shell #pills-concern .choice-card.active .concern-check::before,
+#app-shell #pills-concern .choice-card.active .concern-check svg {
+  opacity: 1;
+  transform: scale(1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #app-shell main > section.step-enter,
+  #app-shell .result-enter,
+  .validation[open] > :not(summary),
+  #app-shell #pills-concern .choice-card.active .app-tile svg,
+  .nasa-dot::after {
+    animation: none !important;
+  }
+  .step-pill::after,
+  .validation summary::after,
+  #app-shell #pills-concern .concern-check::before,
+  #app-shell #pills-concern .concern-check svg {
+    transition: none !important;
+  }
+}
 
 /* ---------- Tooltips y modal ---------- */
 .tip-btn { background: transparent; border-color: var(--hairline-strong); color: var(--txt-soft); }
