@@ -1,11 +1,11 @@
-const CACHE_NAME = "cultiva-v2";
+const CACHE_NAME = "kultiva-v3";
 const PRECACHE_URLS = [
   "/",
   "/static/index.html",
   "/static/styles.css?v=kultiva",
   "/static/app.js?v=kultiva",
   "/static/manifest.json",
-  "/static/logo-cultiva.png?v=2"
+  "/static/logo-Kultiva.png?v=3"
 ];
 
 self.addEventListener("install", (event) => {
