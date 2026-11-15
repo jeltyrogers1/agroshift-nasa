@@ -1,6 +1,6 @@
 {
-  "name": "AgroShift NASA",
-  "short_name": "AgroShift",
+  "name": "Cultiva - Inteligencia Satelital NASA",
+  "short_name": "Cultiva",
   "description": "Diagnóstico satelital paso a paso con datos NASA (MODIS, GPM IMERG, MERRA-2) para agricultores de Coahuila.",
   "start_url": "/",
   "scope": "/",

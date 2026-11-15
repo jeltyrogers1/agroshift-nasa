@@ -1,4 +1,4 @@
-/* AgroShift — Mobile-First 5-Step Wizard Controller (Vanilla ES6 + Leaflet + Chart.js) */
+/* Cultiva — Mobile-First 6-Step Wizard Controller (Vanilla ES6 + Leaflet + Chart.js) */
 (() => {
   const MONTHS = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
   const CURRENCY = new Intl.NumberFormat("es-MX", { style: "currency", currency: "MXN", maximumFractionDigits: 0 });
@@ -1354,7 +1354,7 @@
     container.innerHTML = `
       <div style="border-bottom:2px solid #0f5132; padding-bottom:8pt; margin-bottom:10pt; display:flex; justify-content:space-between; align-items:flex-end;">
         <div>
-          <div class="ps-title">AgroShift — Hoja de Ruta para Campo (3 Años)</div>
+          <div class="ps-title">Cultiva — Hoja de Ruta para Campo (3 Años)</div>
           <div class="ps-sub">Fusión de Telemetría NASA (MODIS MOD13Q1 + GPM IMERG + MERRA-2) y Diagnóstico Edáfico Local</div>
         </div>
         <div class="ps-sub" style="text-align:right;">

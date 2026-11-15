@@ -917,7 +917,7 @@ def simulate_scenarios(
     main_concern: str | list[str] = "sequia",
 ) -> dict[str, Any]:
     """
-    Ejecuta el motor de simulación "What-If" de AgroShift a 3 años (6 ciclos)
+    Ejecuta el motor de simulación "What-If" de Cultiva a 3 años (6 ciclos)
     para la parcela y el cultivo base seleccionados, aceptando calibración manual de suelo
     y prácticas de fertilización / manejo de rastrojo.
     """
