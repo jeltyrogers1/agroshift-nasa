@@ -11,15 +11,15 @@
   "lang": "es-MX",
   "icons": [
     {
-      "src": "/static/logo-plantita.jpg",
+      "src": "/static/logo-cultiva.png?v=2",
       "sizes": "192x192",
-      "type": "image/jpeg",
+      "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "/static/logo-plantita.jpg",
+      "src": "/static/logo-cultiva.png?v=2",
       "sizes": "512x512",
-      "type": "image/jpeg",
+      "type": "image/png",
       "purpose": "any"
     }
   ]
