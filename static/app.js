@@ -50,6 +50,8 @@
     irrigationMode: "temporal",
     marketGoal: "grano",
     currentCrop: "Maiz",
+    lastOfficialCrop: "Maiz",
+    cropInputTriggeredCustom: false,
     customCropName: "",
     customCropWaterTier: "medio",
     fertilizerType: "quimico",
@@ -336,6 +338,123 @@
     if (midKeywords.some((kw) => q.includes(kw))) return "medio";
     if (lowKeywords.some((kw) => q.includes(kw))) return "bajo";
     return null;
+  }
+
+  function normalizeCropQuery(str) {
+    return String(str || "")
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function findBestOfficialCropMatch(rawQuery) {
+    const q = normalizeCropQuery(rawQuery);
+    if (q.length < 2) return null;
+    const tokens = q.split(" ").filter(Boolean);
+    if (!tokens.length) return null;
+
+    const siteMuni = normalizeCropQuery(
+      (state.suelos && state.suelos[state.locationId] && state.suelos[state.locationId].municipio) || ""
+    );
+
+    const matchWords = (words, haystackStr) =>
+      tokens.every((t) => words.some((w) => w === t || (t.length >= 2 && w.startsWith(t))) || (t.length >= 4 && haystackStr.includes(t)));
+
+    let bestFam = null;
+    let bestFamScore = -1;
+    for (const fam of state.familias || []) {
+      const famLbl = normalizeCropQuery(fam.familia_label || "");
+      const famIdStr = normalizeCropQuery(String(fam.familia_cultivo || "").replace(/_/g, " "));
+      const combined = `${famLbl} ${famIdStr}`.trim();
+      const words = combined.split(" ").filter(Boolean);
+      if (!matchWords(words, combined)) continue;
+
+      let sc = 0;
+      const famWords = famLbl.split(" ").filter(Boolean);
+      if (famLbl === q || famIdStr === q) sc += 1450;
+      else if (famLbl.startsWith(q)) sc += 1200;
+      else if (tokens.every((t) => famWords.includes(t))) sc += 1180;
+      else if (tokens.every((t) => famWords.some((w) => w.startsWith(t)))) sc += 1050;
+      else sc += 620;
+      sc -= famLbl.length * 0.5;
+      if (sc > bestFamScore) {
+        bestFamScore = sc;
+        bestFam = {
+          kind: "familia",
+          value: fam.familia_cultivo,
+          categoria_siap: fam.categoria_siap,
+          displayName: `${fam.familia_label} (auto-selección oficial por zona)`,
+          score: sc,
+        };
+      }
+    }
+
+    let bestVar = null;
+    let bestVarScore = -1;
+    for (const v of state.cultivos || []) {
+      const vLbl = normalizeCropQuery(v.cultivo_label || v.nombre_comun || "");
+      const vFull = normalizeCropQuery(`${v.nombre_comun || ""} ${String(v.cultivo || "").replace(/_/g, " ")}`);
+      const vWords = vFull.split(" ").filter(Boolean);
+      if (!matchWords(vWords, vFull)) continue;
+
+      let sc = 0;
+      if (vLbl === q || normalizeCropQuery(v.nombre_comun) === q) sc += 1300;
+      const lblWords = vLbl.split(" ").filter(Boolean);
+      const allInMainLbl = tokens.every((t) => lblWords.some((w) => w === t || w.startsWith(t)) || (t.length >= 4 && vLbl.includes(t)));
+      if (allInMainLbl) sc += 750;
+      else sc += 420;
+
+      const idx = vLbl.indexOf(tokens[0]);
+      if (idx >= 0) sc += Math.max(0, 120 - idx);
+      for (const t of tokens) {
+        if (lblWords.includes(t)) sc += 90;
+      }
+      if (siteMuni && normalizeCropQuery(v.municipios_coahuila || "").includes(siteMuni)) sc += 75;
+      if (siteMuni && vLbl.includes(siteMuni)) sc += 40;
+      const ncNorm = normalizeCropQuery(v.nombre_comun || "");
+      if (ncNorm.includes("emblematica") || ncNorm.includes("estandar comercial") || ncNorm.includes("dominante")) sc += 20;
+      sc -= vLbl.length * 0.4;
+
+      if (sc > bestVarScore) {
+        bestVarScore = sc;
+        bestVar = {
+          kind: "variedad",
+          value: v.cultivo,
+          categoria_siap: v.categoria_siap,
+          displayName: v.nombre_comun || v.cultivo_label || v.cultivo,
+          score: sc,
+        };
+      }
+    }
+
+    if (bestFam && bestVar) {
+      return bestFamScore >= bestVarScore ? bestFam : bestVar;
+    }
+    return bestFam || bestVar || null;
+  }
+
+  function setCropMatchHint(mode, text) {
+    const el = $("crop-match-hint");
+    if (!el) return;
+    el.classList.remove("is-official", "is-custom");
+    if (!text) {
+      el.textContent = "";
+      el.classList.add("hidden");
+      return;
+    }
+    el.textContent = text;
+    if (mode === "official") el.classList.add("is-official");
+    else if (mode === "custom") el.classList.add("is-custom");
+    el.classList.remove("hidden");
+  }
+
+  function clearQuickCropInputUI() {
+    const quickInp = $("crop-quick-input");
+    if (quickInp) quickInp.value = "";
+    setCropMatchHint(null, "");
   }
 
   function inferSoilScoresFromText(typeText, texText, currentWRet, currentERisk, sourceField) {
@@ -1082,16 +1201,22 @@
           const prevCrop = state.currentCrop;
           renderCropSelector();
           if (state.currentCrop !== prevCrop) {
+            state.cropInputTriggeredCustom = false;
+            if (state.currentCrop !== "__otro__") state.lastOfficialCrop = state.currentCrop;
+            clearQuickCropInputUI();
             scheduleSimulate(20);
           }
         });
       });
     }
 
-    // Cultivo actual / que necesita sembrar
+    // Cultivo actual / que necesita sembrar (sincronizado bidireccionalmente con #crop-quick-input)
     $("select-crop").addEventListener("change", (e) => {
       state.currentCrop = e.target.value;
+      state.cropInputTriggeredCustom = false;
       const isCustom = state.currentCrop === "__otro__";
+      if (!isCustom) state.lastOfficialCrop = state.currentCrop;
+      clearQuickCropInputUI();
       const customBox = $("custom-crop-box");
       if (customBox) customBox.classList.toggle("hidden", !isCustom);
       if (isCustom) {
@@ -1102,11 +1227,97 @@
       scheduleSimulate(20);
     });
 
+    const quickCropInp = $("crop-quick-input");
     const customCropInp = $("input-custom-crop");
     const customCropTierSel = $("select-custom-crop-tier");
+    if (quickCropInp) {
+      quickCropInp.addEventListener("input", (e) => {
+        const rawVal = e.target.value;
+        const trimmed = rawVal.trim();
+        const selectEl = $("select-crop");
+        const customBox = $("custom-crop-box");
+
+        if (!trimmed) {
+          setCropMatchHint(null, "");
+          if (state.cropInputTriggeredCustom) {
+            state.cropInputTriggeredCustom = false;
+            const restoreCrop = state.lastOfficialCrop || "Maiz";
+            state.currentCrop = restoreCrop;
+            if (selectEl) {
+              const optExists = Array.from(selectEl.options).some((opt) => opt.value === restoreCrop);
+              if (!optExists && state.cropCategoryFilter !== "all") {
+                state.cropCategoryFilter = "all";
+                if (catFilterBox) {
+                  catFilterBox.querySelectorAll("button[data-cat]").forEach((b) => {
+                    const active = b.dataset.cat === "all";
+                    b.classList.toggle("active", active);
+                    b.setAttribute("aria-pressed", active ? "true" : "false");
+                  });
+                }
+                renderCropSelector();
+              } else if (selectEl) {
+                selectEl.value = restoreCrop;
+              }
+            }
+            if (customBox) customBox.classList.add("hidden");
+            scheduleSimulate(100);
+          }
+          return;
+        }
+
+        const qNorm = normalizeCropQuery(trimmed);
+        if (qNorm.length < 2) {
+          setCropMatchHint(null, "");
+          return;
+        }
+
+        const match = findBestOfficialCropMatch(trimmed);
+        if (match) {
+          state.cropInputTriggeredCustom = false;
+          state.currentCrop = match.value;
+          state.lastOfficialCrop = match.value;
+
+          if (selectEl) {
+            const hasOpt = Array.from(selectEl.options).some((opt) => opt.value === match.value);
+            if (!hasOpt && state.cropCategoryFilter !== "all") {
+              state.cropCategoryFilter = "all";
+              if (catFilterBox) {
+                catFilterBox.querySelectorAll("button[data-cat]").forEach((b) => {
+                  const active = b.dataset.cat === "all";
+                  b.classList.toggle("active", active);
+                  b.setAttribute("aria-pressed", active ? "true" : "false");
+                });
+              }
+              renderCropSelector();
+            }
+            selectEl.value = match.value;
+          }
+          if (customBox) customBox.classList.add("hidden");
+          setCropMatchHint("official", `✓ Coincidencia oficial: ${match.displayName}`);
+          scheduleSimulate(140);
+        } else {
+          state.cropInputTriggeredCustom = true;
+          state.currentCrop = "__otro__";
+          state.customCropName = trimmed;
+          if (selectEl) selectEl.value = "__otro__";
+          if (customCropInp && customCropInp.value !== trimmed) customCropInp.value = trimmed;
+          const detectedTier = inferCustomCropWaterTier(trimmed);
+          if (detectedTier) {
+            state.customCropWaterTier = detectedTier;
+            if (customCropTierSel) customCropTierSel.value = detectedTier;
+          }
+          if (customBox) customBox.classList.remove("hidden");
+          updateResolvedCropHint(null);
+          setCropMatchHint("custom", "✎ Cultivo personalizado: se evaluará por consumo hídrico y clima de tu zona");
+          scheduleSimulate(160);
+        }
+      });
+    }
+
     if (customCropInp) {
       customCropInp.addEventListener("input", (e) => {
         state.customCropName = e.target.value;
+        if (quickCropInp && state.cropInputTriggeredCustom) quickCropInp.value = e.target.value;
         const detectedTier = inferCustomCropWaterTier(e.target.value);
         if (detectedTier) {
           state.customCropWaterTier = detectedTier;

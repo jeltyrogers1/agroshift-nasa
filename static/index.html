@@ -267,6 +267,19 @@
           <select id="select-crop" class="num-input text-base">
             <option value="Maiz">Maíz — Auto-selección por zona</option>
           </select>
+          <div id="crop-quick-box" class="space-y-1.5 pt-1">
+            <label for="crop-quick-input" class="block text-[11px] font-medium text-slate-400">
+              O escríbelo directo aquí (sin buscar en la lista):
+            </label>
+            <input
+              id="crop-quick-input"
+              type="text"
+              placeholder="Ej. Frijol pinto, Nogal, Papa, Manzana, Nopal..."
+              autocomplete="off"
+              class="num-input text-base w-full"
+            />
+            <small id="crop-match-hint" class="crop-match-hint hidden block text-xs leading-snug"></small>
+          </div>
           <p id="crop-resolved-hint" class="hidden text-[11px] leading-snug text-slate-400 pt-0.5"></p>
           <div id="custom-crop-box" class="hidden space-y-2.5 pt-2 border-t border-slate-200/80">
             <div>
@@ -663,7 +676,7 @@
   <script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@turf/turf@6/turf.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-  <script src="/static/offline_engine.js?v=minimal5"></script>
-  <script src="/static/app.js?v=minimal5"></script>
+  <script src="/static/offline_engine.js?v=minimal6"></script>
+  <script src="/static/app.js?v=minimal6"></script>
 </body>
 </html>
