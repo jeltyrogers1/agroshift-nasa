@@ -138,19 +138,51 @@ def api_simulate(req: SimulateRequest) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-def _estimate_wrapped_row_height(texts_and_widths: list[tuple[str, int]], min_h: float = 26.0, line_h: float = 14.2) -> float:
+def _count_wrapped_lines(text: str, col_width: float) -> int:
+    s = str(text or "")
+    if not s:
+        return 1
+    # Ajuste conservador (~85% del ancho nominal) para contemplar saltos por palabra y padding de celda en Excel
+    max_chars = max(12, int(col_width * 0.85) - 2)
+    total_lines = 0
+    for paragraph in s.splitlines() or [""]:
+        words = paragraph.split()
+        if not words:
+            total_lines += 1
+            continue
+        lines_in_p = 1
+        cur_len = 0
+        for w in words:
+            w_len = len(w)
+            if cur_len == 0:
+                while w_len > max_chars:
+                    lines_in_p += 1
+                    w_len -= max_chars
+                cur_len = w_len
+            elif cur_len + 1 + w_len <= max_chars:
+                cur_len += 1 + w_len
+            else:
+                lines_in_p += 1
+                while w_len > max_chars:
+                    lines_in_p += 1
+                    w_len -= max_chars
+                cur_len = w_len
+        total_lines += lines_in_p
+    return max(1, total_lines)
+
+
+def _estimate_wrapped_row_height(
+    texts_and_widths: list[tuple[str, float]],
+    min_h: float = 28.0,
+    line_h: float = 15.0,
+    pad: float = 10.0,
+) -> float:
     max_lines = 1
     for txt, col_w in texts_and_widths:
-        s = str(txt or "")
-        if not s:
-            continue
-        usable = max(12, col_w - 3)
-        total = 0
-        for part in s.splitlines() or [""]:
-            total += max(1, (len(part) + usable - 1) // usable)
-        if total > max_lines:
-            max_lines = total
-    return max(min_h, min(140.0, max_lines * line_h + 8.0))
+        lines = _count_wrapped_lines(txt, col_w)
+        if lines > max_lines:
+            max_lines = lines
+    return max(min_h, float(max_lines * line_h + pad))
 
 
 def _build_excel_workbook(sim: dict[str, Any], rows_168: list[dict[str, Any]]) -> bytes:
@@ -249,6 +281,8 @@ def _build_excel_workbook(sim: dict[str, Any], rows_168: list[dict[str, Any]]) -
             sim["fuente_oficial"],
         ),
     ]
+    widths_168 = [13, 28, 18, 40, 28, 19, 19, 19, 20, 20, 18, 14, 17, 14, 14, 14, 58, 38, 38, 34]
+
     for r_num, (k1, v1, k2, v2, k3, v3, k4, v4) in enumerate(card_rows_1, start=2):
         blocks = [
             ((1, 2), k1, True),
@@ -260,6 +294,7 @@ def _build_excel_workbook(sim: dict[str, Any], rows_168: list[dict[str, Any]]) -
             ((16, 16), k4, True),
             ((17, 20), v4, False),
         ]
+        meta_wrap_pairs: list[tuple[str, float]] = []
         for (c_start, c_end), val, is_lbl in blocks:
             cell = ws1.cell(row=r_num, column=c_start, value=val)
             cell.font = bold_font if is_lbl else body_font
@@ -267,13 +302,15 @@ def _build_excel_workbook(sim: dict[str, Any], rows_168: list[dict[str, Any]]) -
                 cell.fill = sub_fill
             if c_end > c_start:
                 ws1.merge_cells(start_row=r_num, start_column=c_start, end_row=r_num, end_column=c_end)
+            merged_w = sum(widths_168[c_i - 1] for c_i in range(c_start, c_end + 1))
+            meta_wrap_pairs.append((str(val), float(merged_w)))
             for c_i in range(c_start, c_end + 1):
                 mc = ws1.cell(row=r_num, column=c_i)
                 mc.border = cell_border
                 mc.alignment = Alignment(vertical="center", horizontal="left", wrap_text=True)
                 if is_lbl:
                     mc.fill = sub_fill
-        ws1.row_dimensions[r_num].height = 24
+        ws1.row_dimensions[r_num].height = _estimate_wrapped_row_height(meta_wrap_pairs, min_h=24.0, line_h=14.5, pad=8.0)
 
     # Fila 5: Resumen rápido del catálogo (cuántos de 168 son Muy Viables / Con Manejo / Alto Riesgo)
     ws1.cell(row=5, column=1, value="Resumen Catálogo (168)").font = bold_font
@@ -346,9 +383,8 @@ def _build_excel_workbook(sim: dict[str, Any], rows_168: list[dict[str, Any]]) -
         c.fill = header_fill
         c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
         c.border = cell_border
-    ws1.row_dimensions[header_row_168].height = 36
+    ws1.row_dimensions[header_row_168].height = 40
 
-    widths_168 = [12, 28, 17, 42, 30, 19, 19, 19, 21, 22, 18, 13, 17, 13, 13, 13, 64, 38, 36, 30]
     for r_offset, item in enumerate(rows_168, start=header_row_168 + 1):
         cat_grp = f"{item.get('categoria_label', item['categoria_siap'].replace('_', ' '))} · {item.get('familia_label', item['familia_cultivo'].replace('_', ' '))}"
         ahorro_m3 = round(float(item["ahorro_agua_vs_actual_m3"]), 1)
@@ -385,8 +421,8 @@ def _build_excel_workbook(sim: dict[str, Any], rows_168: list[dict[str, Any]]) -
             c.border = cell_border
             c.font = bold_font if (is_top5 and col_i in (1, 4)) else body_font
             c.alignment = Alignment(
-                vertical="center",
-                wrap_text=col_i in (2, 4, 5, 17, 18, 19),
+                vertical="top",
+                wrap_text=col_i in (2, 4, 5, 17, 18, 19, 20),
                 horizontal="center" if col_i in (1, 3, 12, 13, 14, 15, 16) else "left",
             )
             if is_top5:
@@ -409,7 +445,7 @@ def _build_excel_workbook(sim: dict[str, Any], rows_168: list[dict[str, Any]]) -
                 c.font = bold_font
             elif col_i in (6, 7):
                 c.number_format = "+#,##0;-#,##0;0"
-                c.alignment = Alignment(horizontal="right", vertical="center")
+                c.alignment = Alignment(horizontal="right", vertical="top")
                 if ahorro_m3 >= 0:
                     c.font = pos_font
                     if not is_top5:
@@ -420,13 +456,13 @@ def _build_excel_workbook(sim: dict[str, Any], rows_168: list[dict[str, Any]]) -
                         c.fill = neg_water_fill
             elif col_i == 8:
                 c.number_format = "#,##0"
-                c.alignment = Alignment(horizontal="right", vertical="center")
+                c.alignment = Alignment(horizontal="right", vertical="top")
             elif col_i in (9, 11):
                 c.number_format = "$#,##0"
-                c.alignment = Alignment(horizontal="right", vertical="center")
+                c.alignment = Alignment(horizontal="right", vertical="top")
             elif col_i == 10:
                 c.number_format = "+$#,##0;-$#,##0;$0"
-                c.alignment = Alignment(horizontal="right", vertical="center")
+                c.alignment = Alignment(horizontal="right", vertical="top")
                 c.font = pos_font if diff_mxn > 0 else (neg_font if diff_mxn < 0 else body_font)
             elif col_i in (14, 15, 16) and val in light_fills:
                 c.fill = light_fills[val]
@@ -435,8 +471,18 @@ def _build_excel_workbook(sim: dict[str, Any], rows_168: list[dict[str, Any]]) -
                 c.font = muted_font
 
         ws1.row_dimensions[r_offset].height = _estimate_wrapped_row_height(
-            [(diag_txt, 64), (item["nombre_comun"], 42), (item["municipios_coahuila"], 38), (item["fuente_oficial"], 36)],
+            [
+                (viab_txt, widths_168[1]),
+                (item["nombre_comun"], widths_168[3]),
+                (cat_grp, widths_168[4]),
+                (diag_txt, widths_168[16]),
+                (item["municipios_coahuila"], widths_168[17]),
+                (item["fuente_oficial"], widths_168[18]),
+                (item["cultivo"], widths_168[19]),
+            ],
             min_h=28.0,
+            line_h=15.0,
+            pad=10.0,
         )
 
     ws1.auto_filter.ref = f"A{header_row_168}:T{header_row_168 + len(rows_168)}"
@@ -465,6 +511,9 @@ def _build_excel_workbook(sim: dict[str, Any], rows_168: list[dict[str, Any]]) -
             f"Agua {w_agua}% · Ganancia {w_prof}% · Suelo/N {w_nit}% | {sim['main_concern_label']}",
         ),
     ]
+    widths_2 = [18, 38, 14, 20, 20, 18, 18, 19, 20, 17, 15, 14, 14, 14, 40, 40, 40, 58, 26]
+    ws2.row_dimensions[2].height = 8
+
     for r_i, (k1, v1, k2, v2) in enumerate(meta_rows_2, start=3):
         ws2.cell(row=r_i, column=1, value=k1).font = bold_font
         ws2.cell(row=r_i, column=1).fill = sub_fill
@@ -482,13 +531,17 @@ def _build_excel_workbook(sim: dict[str, Any], rows_168: list[dict[str, Any]]) -
             mc.alignment = Alignment(vertical="center", wrap_text=True)
             if c_i in (1, 2, 11, 12):
                 mc.fill = sub_fill
-        ws2.row_dimensions[r_i].height = 24
+        ws2.row_dimensions[r_i].height = _estimate_wrapped_row_height(
+            [(v1, float(sum(widths_2[2:10]))), (v2, float(sum(widths_2[12:19])))],
+            min_h=24.0,
+            line_h=14.5,
+            pad=8.0,
+        )
 
-    ws2.row_dimensions[6].height = 10
     ws2["A6"] = "Comparativa del Plan Actual (Línea Base) vs. Top 5 Rotaciones Combinadas a 3 Años"
     ws2["A6"].font = section_font
     ws2.merge_cells("A6:S6")
-    ws2.row_dimensions[6].height = 22
+    ws2.row_dimensions[6].height = 26
 
     headers_2 = [
         "Posición",
@@ -518,7 +571,7 @@ def _build_excel_workbook(sim: dict[str, Any], rows_168: list[dict[str, Any]]) -
         c.fill = header_fill
         c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
         c.border = cell_border
-    ws2.row_dimensions[header_row_2].height = 32
+    ws2.row_dimensions[header_row_2].height = 38
 
     base_plan = next((p for p in sim["plans"] if p["plan_id"] == "plan_actual"), sim["plans"][0])
     base_net = float(base_plan["ingreso_neto_total_mxn"])
@@ -562,8 +615,8 @@ def _build_excel_workbook(sim: dict[str, Any], rows_168: list[dict[str, Any]]) -
             c.font = bold_font if (is_best or col_i in (1, 2)) else body_font
             c.border = cell_border
             c.alignment = Alignment(
-                vertical="center",
-                wrap_text=col_i in (2, 15, 16, 17, 18),
+                vertical="top",
+                wrap_text=col_i in (1, 2, 15, 16, 17, 18, 19),
                 horizontal="center" if col_i in (1, 3, 10, 11, 12, 13, 14) else "left",
             )
             if is_best:
@@ -575,17 +628,17 @@ def _build_excel_workbook(sim: dict[str, Any], rows_168: list[dict[str, Any]]) -
                 c.number_format = '0.0"%"'
             elif col_i in (4, 9):
                 c.number_format = "$#,##0"
-                c.alignment = Alignment(horizontal="right", vertical="center")
+                c.alignment = Alignment(horizontal="right", vertical="top")
             elif col_i == 5:
                 c.number_format = "+$#,##0;-$#,##0;$0"
-                c.alignment = Alignment(horizontal="right", vertical="center")
+                c.alignment = Alignment(horizontal="right", vertical="top")
                 c.font = pos_font if diff_mxn > 0 else (neg_font if diff_mxn < 0 else body_font)
             elif col_i == 6:
                 c.number_format = "#,##0"
-                c.alignment = Alignment(horizontal="right", vertical="center")
+                c.alignment = Alignment(horizontal="right", vertical="top")
             elif col_i in (7, 8):
                 c.number_format = "+#,##0;-#,##0;0"
-                c.alignment = Alignment(horizontal="right", vertical="center")
+                c.alignment = Alignment(horizontal="right", vertical="top")
                 c.font = pos_font if ahorro_m3 > 0 else (neg_font if ahorro_m3 < 0 else body_font)
             elif col_i in (12, 13, 14) and val in light_fills:
                 c.fill = light_fills[val]
@@ -594,13 +647,21 @@ def _build_excel_workbook(sim: dict[str, Any], rows_168: list[dict[str, Any]]) -
                 c.font = muted_font
 
         ws2.row_dimensions[row_cursor].height = _estimate_wrapped_row_height(
-            [(y_strs[0], 36), (y_strs[1], 36), (y_strs[2], 36), (summary_txt, 64)],
+            [
+                (p["plan_name"], widths_2[1]),
+                (y_strs[0], widths_2[14]),
+                (y_strs[1], widths_2[15]),
+                (y_strs[2], widths_2[16]),
+                (summary_txt, widths_2[17]),
+                (p["plan_id"], widths_2[18]),
+            ],
             min_h=44.0,
+            line_h=15.0,
+            pad=10.0,
         )
 
     ws2.auto_filter.ref = f"A{header_row_2}:S{row_cursor}"
     ws2.freeze_panes = f"A{header_row_2 + 1}"
-    widths_2 = [18, 36, 13, 21, 22, 18, 18, 19, 20, 17, 15, 13, 13, 13, 36, 36, 36, 64, 24]
     for col_i, w in enumerate(widths_2, start=1):
         ws2.column_dimensions[get_column_letter(col_i)].width = w
 
