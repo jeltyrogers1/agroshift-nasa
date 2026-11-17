@@ -804,6 +804,8 @@ def _compute_parcel_climate_metrics(
 
     min_temp_pv = min(m["t2m_min_c_mean"] for m in pv_rows) + temp_inc
     min_temp_oi = min(m["t2m_min_c_mean"] for m in oi_rows) + temp_inc
+    max_temp_pv = max(m["t2m_max_c_mean"] for m in pv_rows) + temp_inc
+    max_temp_oi = max(m["t2m_max_c_mean"] for m in oi_rows) + temp_inc
 
     pest_days_pv = sum(m["pest_risk_days_mean"] for m in pv_rows)
     pest_days_oi = sum(m["pest_risk_days_mean"] for m in oi_rows)
@@ -828,6 +830,8 @@ def _compute_parcel_climate_metrics(
         "frost_days_annual": frost_days_annual,
         "min_temp_pv_c": min_temp_pv,
         "min_temp_oi_c": min_temp_oi,
+        "max_temp_pv_c": max_temp_pv,
+        "max_temp_oi_c": max_temp_oi,
         "pest_days_pv": pest_days_pv,
         "pest_days_oi": pest_days_oi,
         "pest_days_annual": pest_days_annual,
@@ -1918,18 +1922,55 @@ def _build_nasa_evidence_summary(
 
     water_saved = plan_metrics["ahorro_agua_m3"]
     income_diff = plan_metrics["ingreso_neto_total_mxn"] - baseline_metrics["ingreso_neto_total_mxn"]
-    pv_crops_used = sorted(
-        {y["pv_crop_label"] for y in plan_metrics["years"] if y["pv_crop_id"] != "Barbecho_Suelo_Desnudo"}
-    )
-    oi_crops_used = sorted(
-        {y["oi_crop_label"] for y in plan_metrics["years"] if y["oi_crop_id"] != "Barbecho_Suelo_Desnudo"}
-    )
-    crops_str = ", ".join(pv_crops_used + [c for c in oi_crops_used if c not in pv_crops_used])
+    bal_plan = plan_metrics["balance_nitrogeno_y_cobertura"]
+    bal_base = baseline_metrics["balance_nitrogeno_y_cobertura"]
+    meses_prot = int(bal_plan["meses_suelo_protegido_3a"])
+    n_cycles = int(bal_plan["ciclos_fijacion_nitrogeno_3a"])
+    base_bare = int(bal_base["meses_suelo_desnudo_3a"])
+
+    rotation_partners: list[str] = []
+    for y in plan_metrics["years"]:
+        for lbl_key, id_key in (("pv_crop_label", "pv_crop_id"), ("oi_crop_label", "oi_crop_id")):
+            cid = y.get(id_key)
+            if not cid or cid == "Barbecho_Suelo_Desnudo":
+                continue
+            raw_lbl = str(y.get(lbl_key, ""))
+            if is_orchard and cid == current_crop_info["cultivo"]:
+                if "+" in raw_lbl:
+                    # Extraer solo el cultivo intercalado en callejones
+                    after_plus = raw_lbl.split("+", 1)[1].replace("(en callejones)", "").strip()
+                    if after_plus and after_plus not in rotation_partners:
+                        rotation_partners.append(after_plus)
+                continue
+            clean_lbl = raw_lbl.replace("(cobertura en callejones)", "").strip()
+            if clean_lbl and clean_lbl != current_crop_label and clean_lbl not in rotation_partners:
+                rotation_partners.append(clean_lbl)
+    if not rotation_partners:
+        rotation_partners = sorted(
+            {
+                y["oi_crop_label"].replace("(cobertura en callejones)", "").strip()
+                for y in plan_metrics["years"]
+                if y["oi_crop_id"] != "Barbecho_Suelo_Desnudo"
+            }
+        )
+    crops_str = ", ".join(rotation_partners)
 
     if water_saved >= 0:
         water_clause = f"ahorra {water_saved:,.0f} m³ de agua en 3 años"
+    elif n_cycles > 0:
+        water_clause = (
+            f"requiere {abs(water_saved):,.0f} m³ adicionales para sostener cobertura continua con fijación de nitrógeno"
+        )
     else:
-        water_clause = f"requiere {abs(water_saved):,.0f} m³ adicionales para sostener cobertura perenne fijadora de nitrógeno"
+        water_clause = (
+            f"requiere {abs(water_saved):,.0f} m³ adicionales para sostener producción comercial con cobertura todo el año"
+        )
+
+    cover_clause = (
+        f"protege el suelo los 36 meses (mitigando {modis_alert_3y} meses acumulados de alerta por suelo desnudo/estrés en MODIS NDVI)"
+        if meses_prot >= 36
+        else f"mantiene cubierto el suelo {meses_prot}/36 meses"
+    )
 
     n_savings_total = float(plan_metrics.get("ahorro_fertilizante_n_total_mxn", 0.0))
     fert_savings_clause = ""
@@ -1942,20 +1983,39 @@ def _build_nasa_evidence_summary(
             f" Incluye ahorro estimado en fertilizante nitrogenado (${n_savings_total:,.0f} MXN) al incorporar leguminosas."
         )
 
-    action_phrase = (
-        f"mantener activa la huerta de {current_crop_label} los 3 años e intercalar {crops_str} en los callejones"
-        if is_orchard
-        else f"sembrar {current_crop_label} en el Año 1 y rotar con {crops_str}"
+    if is_orchard:
+        action_phrase = f"mantener activa la huerta de {current_crop_label} los 3 años e intercalar {crops_str} en los callejones"
+        base_desc = f"la huerta de {current_crop_label} con callejones desnudos"
+    elif current_ciclo == "Otono-Invierno":
+        action_phrase = f"conservar {current_crop_label} en el primer invierno y rotar con {crops_str}"
+        base_desc = f"el monocultivo invernal de {current_crop_label}"
+    elif base_bare == 0:
+        action_phrase = f"iniciar con {current_crop_label} en el Año 1 y transicionar en Años 2 y 3 con {crops_str}"
+        base_desc = f"el monocultivo continuo de {current_crop_label}"
+    else:
+        action_phrase = f"sembrar {current_crop_label} en el Año 1 y rotar con {crops_str}"
+        base_desc = f"el manejo sin cobertura de {current_crop_label}"
+
+    risk_cautions: list[str] = []
+    if plan_metrics["semaforo_sequia"] != "VERDE":
+        risk_cautions.append(f"Sequía en {plan_metrics['semaforo_sequia']}")
+    if plan_metrics["semaforo_heladas"] != "VERDE":
+        risk_cautions.append(f"Heladas en {plan_metrics['semaforo_heladas']}")
+    if plan_metrics["semaforo_plagas"] != "VERDE":
+        risk_cautions.append(f"Plagas en {plan_metrics['semaforo_plagas']}")
+    plan_risk_clause = (
+        f" Vigilar {', '.join(risk_cautions)} en el plan."
+        if risk_cautions
+        else " Semáforos de sequía, heladas y plagas en VERDE."
     )
 
     return (
         f"Con base en 10 años de registros satelitales NASA POWER y MODIS NDVI en {zona}, "
-        f"{rain_clause}, mientras el manejo sin cobertura de {current_crop_label} entra en {base_seq_phrase} de sequía "
-        f"y {base_pla_phrase} de plagas, {action_phrase} en {hectares:.1f} ha "
-        f"{water_clause}, protege el suelo los 36 meses "
-        f"(mitigando {modis_alert_3y} meses acumulados de alerta por suelo desnudo/estrés en MODIS NDVI) "
+        f"{rain_clause}, mientras {base_desc} presenta {base_seq_phrase} en sequía "
+        f"y {base_pla_phrase} en plagas, {action_phrase} en {hectares:.1f} ha "
+        f"{water_clause}, {cover_clause} "
         f"y genera ${plan_metrics['ingreso_neto_total_mxn']:,.0f} MXN netos "
-        f"({'+' if income_diff >= 0 else ''}${income_diff:,.0f} MXN vs. manejo base de {current_crop_label}).{fert_savings_clause}"
+        f"({'+' if income_diff >= 0 else ''}${income_diff:,.0f} MXN vs. manejo base de {current_crop_label}).{fert_savings_clause}{plan_risk_clause}"
     )
 
 
@@ -2489,81 +2549,326 @@ def simulate_scenarios(
     }
 
 
-def _evaluate_candidate_viability_for_168(
+def _evaluate_crop_survival_and_viability(
     crop: dict[str, Any],
+    ev: dict[str, Any],
+    ahorro_m3: float,
+    diff_dinero: float,
+    is_same_baseline: bool,
     ctx: dict[str, Any],
-) -> tuple[float, str]:
-    """Evalúa compatibilidad biofísica/hídrica real de cada una de las 168 variedades en la parcela."""
+) -> dict[str, Any]:
+    """
+    Calcula compatibilidad térmica/altitudinal, hídrica y regional real (probabilidad 0-99%,
+    semáforos coherentes, estado de viabilidad y diagnóstico claro en lenguaje de agricultor)
+    exclusivamente con base en los parámetros oficiales del catálogo CSV y la parcela.
+    """
     soil = ctx["soil"]
+    climate = ctx["climate"]
     location_id = ctx["location_id"]
     elev_m = float(soil.get("local_elevation_m", 1700.0))
-    is_high_alt = elev_m >= 2000.0 or location_id == "Los_Lirios_Arteaga"
+    elev_int = int(round(elev_m))
+    muni_short = str(soil.get("municipio", soil.get("zona_label", ""))).replace("_", " ").strip()
     irrigation_mode = ctx["irrigation_mode"]
+    temp_inc = float(ctx.get("temp_increase_c", 0.0))
+
+    temp_min = float(crop.get("temp_min_c", 8.0))
+    temp_max = float(crop.get("temp_max_c", 35.0))
+    umbral_helada = float(crop.get("umbral_helada_c", 1.0))
+    frost_tol = int(crop.get("frost_tolerance_score", 2))
+    drought_tol = int(crop.get("drought_tolerance_score", 2))
+    water_mm = float(crop.get("consumo_agua_mm", 400.0))
+    root_cm = int(crop.get("profundidad_raiz_cm", 60))
+    fam = crop.get("familia_cultivo", "")
+    cid_lower = crop["cultivo"].lower()
 
     munis_text = _strip_accents(crop.get("municipios_coahuila", ""))
     benefit_text = _strip_accents(crop.get("beneficio_principal", ""))
     modal_text = _strip_accents(crop.get("modalidad_hidrica_tipica", ""))
+    nombre_norm = _strip_accents(crop.get("nombre_comun", ""))
     geo_text = f"{munis_text} {benefit_text}"
 
     preferred_tokens, _ = _site_location_tokens(location_id, soil)
-    muni_match = any(tok in munis_text for tok in preferred_tokens[:2])
+    direct_muni_match = any(tok in munis_text for tok in preferred_tokens[:2])
+    regional_match = any(
+        tok in munis_text for tok in (preferred_tokens[2:] + ["sureste de coahuila", "coahuila"])
+    )
 
-    adj = 0.0
+    frost_light = ev["semaforo_heladas"]
+    drought_light = ev["semaforo_sequia"]
+    pest_light = ev["semaforo_plagas"]
+
+    surv = 84.0
+    viab_adj = 0.0
+    thermal_reasons: list[str] = []
+    water_reasons: list[str] = []
+    positive_reasons: list[str] = []
     notes: list[str] = []
 
-    if muni_match:
-        adj += 5.5
+    # --- a) Compatibilidad térmica, altitudinal y de horas frío ---
+    elev_temp_offset = (1760.0 - elev_m) * 0.0065
+    eff_min_pv = float(climate["min_temp_pv_c"]) + elev_temp_offset
+    eff_max_pv = float(climate.get("max_temp_pv_c", 32.0)) + max(0.0, elev_temp_offset)
 
-    # Compatibilidad hídrica (temporal vs riego/invernadero)
+    is_low_chill_explicit = (
+        "bajo_requerimiento" in cid_lower
+        or "bajo_frio" in cid_lower
+        or "bajo frio" in benefit_text
+        or "menor requerimiento de horas frio" in benefit_text
+        or "general cepeda" in munis_text
+    )
+    needs_high_chill = fam in {"Manzana", "Durazno_Chabacano_y_Membrillo"} and not is_low_chill_explicit and temp_max <= 30.0
+
+    if elev_m >= 1700.0 and temp_min >= 14.0:
+        # Cultivo de clima cálido en zona templada o fría (>= 1,700 msnm como Saltillo o Arteaga)
+        frost_light = "ROJO"
+        cold_gap = max(0.0, temp_min - eff_min_pv)
+        if elev_m >= 2000.0:
+            surv -= 42.0 + min(12.0, cold_gap * 1.4) + max(0.0, umbral_helada - 1.5) * 2.0
+            viab_adj -= 24.0
+            msg = f"cultivo de clima cálido (mín. {temp_min:.0f} °C) que sufre por heladas en altitud de {elev_int:,} msnm"
+        else:
+            surv -= 30.0 + min(12.0, cold_gap * 1.5) + max(0.0, umbral_helada - 1.5) * 1.8 - temp_inc * 1.5
+            viab_adj -= 18.0
+            msg = f"cultivo de clima cálido (mín. {temp_min:.0f} °C) muy sensible al frío nocturno y heladas tempranas en {muni_short}"
+        thermal_reasons.append(msg)
+        notes.append(msg)
+    elif elev_m >= 2000.0 and ("no apto sierra" in geo_text or "sorgo" in cid_lower or (umbral_helada >= 2.0 and frost_tol <= 1)):
+        is_hard_no_sierra = "no apto sierra" in geo_text or "sorgo" in cid_lower
+        if is_hard_no_sierra:
+            frost_light = "ROJO"
+            surv -= 34.0
+            viab_adj -= 22.0
+            msg = f"no adaptado a sierra fría ({elev_int:,} msnm) por riesgo de heladas"
+        else:
+            if frost_light == "VERDE":
+                frost_light = "AMARILLO"
+            surv -= 16.0
+            viab_adj -= 10.0
+            msg = f"sensible a heladas tempranas en sierra ({elev_int:,} msnm)"
+        thermal_reasons.append(msg)
+        notes.append(msg)
+    elif elev_m < 1550.0 and needs_high_chill:
+        # Zona cálida baja (< 1,550 msnm como General Cepeda): déficit de horas frío invernal
+        surv -= 39.0 + temp_inc * 3.5 + max(0.0, 29.5 - temp_max) * 2.5
+        viab_adj -= 22.0
+        msg = f"requiere muchas horas frío invernal y sufre estrés térmico en zona baja cálida ({elev_int:,} msnm)"
+        thermal_reasons.append(msg)
+        notes.append(msg)
+    elif elev_m < 1550.0 and (
+        "sierra de arteaga" in geo_text
+        or ">2,000 msnm" in geo_text
+        or ">2,100 msnm" in geo_text
+        or temp_max <= 27.0
+    ) and not any(t in munis_text for t in ("general cepeda", "parras", "laguna", "region centro", "region norte")):
+        heat_excess = max(0.0, eff_max_pv - temp_max)
+        surv -= 22.0 + min(12.0, heat_excess * 2.0)
+        viab_adj -= 16.0
+        msg = f"variedad de sierra fresca que pierde vigor por calor diurno en {elev_int:,} msnm"
+        thermal_reasons.append(msg)
+        notes.append(msg)
+    elif eff_max_pv > temp_max + 2.0:
+        heat_ex = eff_max_pv - temp_max - 2.0
+        surv -= min(14.0, heat_ex * 2.4)
+        viab_adj -= min(8.0, heat_ex * 1.4)
+        thermal_reasons.append(f"susceptible a picos de calor arriba de {temp_max:.0f} °C")
+    elif elev_m >= 1700.0 and frost_tol >= 3:
+        surv += 5.0
+        viab_adj += 4.5
+        positive_reasons.append("tolera bien el frío nocturno")
+    elif elev_m < 1550.0 and temp_min >= 12.0 and temp_max >= 35.0:
+        surv += 5.0
+        viab_adj += 4.5
+        positive_reasons.append("aprovecha bien las temperaturas cálidas de la zona")
+
+    # Cultivos estrictamente de Primavera-Verano en zonas cálidas (< 1,700 m) no están en campo en invierno
+    ciclo_norm = crop.get("ciclo_norm") or crop.get("ciclo_siembra", "")
+    if elev_m < 1700.0 and ciclo_norm == "Primavera-Verano" and frost_light != "ROJO":
+        if float(climate.get("frost_days_pv", 0.0)) < 1.0 and eff_min_pv >= min(11.5, temp_min):
+            frost_light = "VERDE"
+
+    if frost_tol <= 1 and frost_light == "ROJO" and not thermal_reasons:
+        thermal_reasons.append(f"riesgo crítico de heladas en {muni_short}")
+
+    # --- b) Compatibilidad hídrica (consumo vs lluvia simulada + riego + retención suelo) ---
+    rain_adj = float(climate["rain_adj_annual_mm"])
+    w_ret = int(soil.get("water_retention_score", 2))
+    mo_pct = float(soil.get("materia_organica_pct", 1.5))
+    soil_buf_mm = (w_ret - 2) * 35.0 + (mo_pct - 1.5) * 14.0 + (22.0 if ctx["tillage_mode"] == "conservacion" else 0.0)
+    avail_supply_mm = rain_adj + soil_buf_mm + (400.0 if irrigation_mode == "riego" else 0.0)
+    water_deficit_mm = max(0.0, water_mm - avail_supply_mm)
+
     has_temporal = any(tok in modal_text for tok in ("temporal", "residual", "agostadero"))
     has_auxilio = any(tok in modal_text for tok in ("auxilio", "deficitario", "acequia"))
-    is_protected_only = "invernadero" in modal_text and "campo" not in geo_text and "cielo abierto" not in _strip_accents(crop["nombre_comun"])
+    requires_riego = not has_temporal and not has_auxilio
+    is_protected_only = "invernadero" in modal_text and "campo" not in geo_text and "cielo abierto" not in nombre_norm
+
     if irrigation_mode == "temporal":
-        if has_temporal:
-            if ">500 mm" in modal_text and ctx["climate"]["rain_adj_annual_mm"] < 420.0:
-                adj -= 12.0
-                notes.append("requiere temporal de sierra (>500 mm anuales)")
-            else:
-                adj += 5.0
-        elif has_auxilio:
-            adj -= 1.0
+        if (water_mm > 500.0 and drought_tol <= 1) or (water_mm > 500.0 and requires_riego):
+            drought_light = "ROJO"
+            surv -= min(44.0, 32.0 + water_deficit_mm / 25.0)
+            viab_adj -= 18.0
+            msg = (
+                f"exige {int(round(water_mm))} mm de agua y riego constante (en temporal solo hay {rain_adj:.0f} mm)"
+            )
+            water_reasons.append(msg)
+            notes.append(msg)
+        elif requires_riego:
+            surv -= 22.0 + min(14.0, water_deficit_mm / 18.0)
+            viab_adj -= 14.0
+            if water_deficit_mm > 60.0 and drought_tol <= 2:
+                drought_light = "ROJO"
+            elif drought_light == "VERDE":
+                drought_light = "AMARILLO"
+            msg = f"diseñado para riego tecnificado ({int(round(water_mm))} mm), limitado en temporal"
+            water_reasons.append(msg)
+            notes.append(msg)
+        elif water_deficit_mm > 65.0:
+            tol_factor = max(0.30, 1.15 - drought_tol * 0.20)
+            surv -= min(26.0, (water_deficit_mm / 16.0) * tol_factor)
+            viab_adj -= 8.0 if water_deficit_mm > 120.0 else 3.0
+            if drought_tol <= 1 and water_deficit_mm > 140.0:
+                drought_light = "ROJO"
+            elif drought_light == "VERDE" and drought_tol <= 2 and water_deficit_mm > 110.0:
+                drought_light = "AMARILLO"
+            water_reasons.append(f"demanda {int(round(water_mm))} mm frente a {rain_adj:.0f} mm de lluvia simulada")
         else:
-            adj -= 15.0
-            notes.append("requiere riego tecnificado o invernadero (restricción en temporal)")
+            viab_adj += 5.0 if has_temporal else 0.0
+            if drought_tol >= 3:
+                surv += 5.0
+                positive_reasons.append("resiste bien la falta de lluvia en temporal")
+            elif has_temporal:
+                positive_reasons.append("se adapta al régimen de temporal")
         if is_protected_only:
-            adj -= 8.0
+            surv -= 8.0
+            viab_adj -= 6.0
+    else:  # riego / auxilio
+        if not requires_riego:
+            viab_adj += 2.0
+        else:
+            viab_adj += 4.5
+        if water_deficit_mm > 110.0:
+            surv -= min(18.0, (water_deficit_mm - 80.0) / 18.0)
+            water_reasons.append(f"demanda hídrica muy alta ({int(round(water_mm))} mm) bajo el clima simulado")
+        else:
+            surv += 5.0
+            if water_deficit_mm <= 40.0 and drought_light == "ROJO":
+                # Cultivo cubierto por lámina de riego: no marcar ROJO crítico por evaporación de barbecho
+                drought_light = "AMARILLO" if w_ret == 1 and water_mm >= 580.0 else "VERDE"
+            elif water_deficit_mm == 0.0 and (w_ret >= 2 or water_mm <= 520.0) and drought_light == "AMARILLO":
+                drought_light = "VERDE"
+            if drought_tol >= 3:
+                positive_reasons.append("aprovecha eficientemente el riego de auxilio")
+        if is_protected_only:
+            surv -= 5.0
+            water_reasons.append("requiere invernadero o malla sombra")
 
-    # Compatibilidad térmica / altitud
-    temp_min = float(crop.get("temp_min_c", 8.0))
-    if is_high_alt:
-        if "no apto sierra" in geo_text or "sorgo" in crop["cultivo"].lower():
-            adj -= 22.0
-            notes.append("no recomendado en sierra alta (>=2,000 msnm) por frío nocturno")
-        elif temp_min >= 14.0 or float(crop.get("umbral_helada_c", 1.0)) >= 2.5:
-            adj -= 16.0
-            notes.append("alto riesgo de helada en zonas >=2,000 msnm")
-        elif "partes bajas" in munis_text and "los lirios" not in munis_text:
-            adj -= 6.0
-        elif int(crop.get("frost_tolerance_score", 2)) >= 3:
-            adj += 4.5
-    elif elev_m < 1700.0:
-        if (
-            ("sierra de arteaga" in geo_text or ">2,000 msnm" in geo_text or ">2,100 msnm" in geo_text or "temporal de sierra" in modal_text)
-            and not any(t in munis_text for t in ("saltillo", "parras", "general cepeda", "laguna"))
-        ):
-            adj -= 16.0
-            notes.append("requiere mayor altitud/horas frío que esta parcela")
-    else:  # 1700 <= elev_m < 2000 (valles medios como Saltillo / La Narro)
-        if "temporal de sierra (>500 mm)" in modal_text and ctx["climate"]["rain_adj_annual_mm"] < 420.0:
-            adj -= 8.0
+    # --- c) Compatibilidad regional oficial y manejo de suelo ---
+    if direct_muni_match:
+        surv += 8.0
+        viab_adj += 5.5
+        positive_reasons.append(f"adaptada oficialmente a {muni_short}")
+    elif regional_match:
+        surv += 3.5
+        viab_adj += 2.0
+    else:
+        surv -= 7.0
 
-    # Suelo y preocupaciones
+    if int(soil.get("needs_nitrogen_fixation", 0)) == 1 and crop["fija_nitrogeno"] == "Si":
+        surv += 3.0
+        viab_adj += 3.5
     if int(soil.get("needs_erosion_cover", 0)) == 1 and int(crop.get("erosion_control_score", 2)) >= 3:
-        adj += 3.0
-    if int(soil.get("needs_nitrogen_fixation", 0)) == 1 and int(crop.get("fija_nitrogeno_bin", 0)) == 1:
-        adj += 3.5
+        surv += 2.5
+        viab_adj += 3.0
+    if ctx["tillage_mode"] == "conservacion":
+        surv += 2.0
+    if root_cm >= 100 and "sequia" in ctx["concerns"]:
+        surv += 2.0
 
-    return adj, ("; ".join(notes) if notes else "")
+    # Coherencia entre semáforos climáticos críticos y probabilidad de supervivencia
+    if drought_light == "ROJO" or frost_light == "ROJO":
+        surv = min(surv, 46.0)
+    elif drought_light == "AMARILLO" or frost_light == "AMARILLO" or pest_light == "ROJO":
+        surv = min(surv, 73.0)
+
+    prob_pct = int(max(5, min(99, round(surv))))
+
+    if prob_pct < 50 or drought_light == "ROJO" or frost_light == "ROJO":
+        estado_viabilidad = "❌ Alto Riesgo de Pérdida"
+    elif (
+        prob_pct >= 75
+        and drought_light != "ROJO"
+        and frost_light != "ROJO"
+        and pest_light != "ROJO"
+        and drought_light != "AMARILLO"
+        and frost_light != "AMARILLO"
+    ):
+        estado_viabilidad = "✅ Muy Viable en tu Parcela"
+    else:
+        estado_viabilidad = "⚠️ Viable con Manejo / Cuidados"
+
+    # --- d) Diagnóstico claro y específico en lenguaje de agricultor ---
+    if estado_viabilidad.startswith("✅"):
+        prefix = f"Alta supervivencia ({prob_pct}%) en {muni_short}"
+    elif estado_viabilidad.startswith("❌"):
+        prefix = f"Alto riesgo ({prob_pct}%) en {muni_short} ({elev_int:,} msnm)"
+    else:
+        prefix = f"Viable con manejo ({prob_pct}%) en {muni_short} ({elev_int:,} msnm)"
+
+    clauses: list[str] = []
+    if estado_viabilidad.startswith("❌"):
+        clauses.extend(thermal_reasons[:1])
+        clauses.extend(water_reasons[:1])
+        if not clauses:
+            clauses.append(
+                f"baja adaptación climática/edáfica bajo {irrigation_mode}"
+            )
+    elif estado_viabilidad.startswith("⚠️"):
+        clauses.extend(thermal_reasons[:1] or water_reasons[:1])
+        if pest_light == "ROJO" and not clauses:
+            clauses.append(
+                "el monocultivo seguido eleva plagas hacia el Año 3" if is_same_baseline else "requiere rotación o cobertura invernal para contener plagas"
+            )
+        if not clauses and positive_reasons:
+            clauses.append(positive_reasons[0])
+    else:
+        if positive_reasons:
+            clauses.append(", ".join(positive_reasons[:2]))
+        else:
+            clauses.append(f"buena compatibilidad térmica e hídrica en {irrigation_mode}")
+
+    if ahorro_m3 >= 300:
+        clauses.append(f"ahorra {ahorro_m3:,.0f} m³ de agua en 3 años")
+    elif ahorro_m3 <= -300:
+        clauses.append(f"gasta {abs(ahorro_m3):,.0f} m³ extra de agua en 3 años")
+    else:
+        clauses.append("gasto de agua similar a tu cultivo actual")
+
+    if crop["fija_nitrogeno"] == "Si":
+        clauses.append("fija nitrógeno natural")
+    elif crop["modo_en_kultiva"] == "Cobertura_Intercalada_Perenne":
+        clauses.append("mantiene cobertura perenne todo el año")
+    elif diff_dinero >= 15000:
+        clauses.append(f"deja +${diff_dinero:,.0f} MXN extra vs. tu cultivo actual")
+    elif diff_dinero <= -15000:
+        clauses.append(f"deja ${abs(diff_dinero):,.0f} MXN menos que tu cultivo actual")
+
+    if len(clauses) == 1:
+        diagnostico = f"{prefix}: {clauses[0]}."
+    elif len(clauses) == 2:
+        diagnostico = f"{prefix}: {clauses[0]} y {clauses[1]}."
+    else:
+        diagnostico = f"{prefix}: {', '.join(clauses[:-1])} y {clauses[-1]}."
+
+    return {
+        "probabilidad_supervivencia_pct": prob_pct,
+        "estado_viabilidad": estado_viabilidad,
+        "drought_light": drought_light,
+        "frost_light": frost_light,
+        "pest_light": pest_light,
+        "viab_adj": viab_adj,
+        "viab_note": "; ".join(notes),
+        "diagnostico_agricultor": diagnostico,
+    }
 
 
 def simulate_all_168_crops(
@@ -2591,8 +2896,8 @@ def simulate_all_168_crops(
 ) -> list[dict[str, Any]]:
     """
     Evalúa de forma determinista cada una de las 168 variedades oficiales en la parcela actual
-    comparándolas contra la línea base del cultivo actual (`plan_actual`), y devuelve la tabla
-    rankeada de #1 a #168.
+    comparándolas contra la línea base del cultivo actual (`plan_actual`), calculando probabilidad
+    de supervivencia (0-99%), estado de viabilidad y diagnóstico claro para el agricultor.
     """
     eff_irrigation = irrigation_mode if irrigation_mode is not None else (irrigation or "temporal")
     eff_fertilizer = fertilizer_type if fertilizer_type is not None else (fertilizer or "quimico")
@@ -2645,7 +2950,7 @@ def simulate_all_168_crops(
         v for k, v in ctx["cultivos"].items() if k not in {"Barbecho_Suelo_Desnudo", "__otro__"}
     ]
 
-    prelim_evals: list[tuple[dict[str, Any], dict[str, Any], float, str]] = []
+    prelim_evals: list[tuple[dict[str, Any], dict[str, Any], bool]] = []
     for v in official_varieties:
         vid = v["cultivo"]
         ciclo_norm = v.get("ciclo_norm") or v["ciclo_siembra"]
@@ -2660,21 +2965,21 @@ def simulate_all_168_crops(
             ]
         elif ciclo_norm == "Todo_el_ano":
             years_spec = [
-                {"year": 1, "pv": vid, "oi": vid, "consec_override": 0 if not is_same_baseline else 0},
-                {"year": 2, "pv": vid, "oi": vid, "consec_override": 0 if not is_same_baseline else 1},
-                {"year": 3, "pv": vid, "oi": vid, "consec_override": 1 if not is_same_baseline else 2},
+                {"year": 1, "pv": vid, "oi": vid, "consec_override": 0},
+                {"year": 2, "pv": vid, "oi": vid, "consec_override": 1 if is_same_baseline else 0},
+                {"year": 3, "pv": vid, "oi": vid, "consec_override": 2 if is_same_baseline else 0},
             ]
         elif ciclo_norm == "Otono-Invierno":
             years_spec = [
                 {"year": 1, "pv": "Barbecho_Suelo_Desnudo", "oi": vid, "consec_override": 0},
-                {"year": 2, "pv": "Barbecho_Suelo_Desnudo", "oi": vid, "consec_override": 0 if not is_same_baseline else 1},
-                {"year": 3, "pv": "Barbecho_Suelo_Desnudo", "oi": vid, "consec_override": 1 if not is_same_baseline else 2},
+                {"year": 2, "pv": "Barbecho_Suelo_Desnudo", "oi": vid, "consec_override": 1 if is_same_baseline else 0},
+                {"year": 3, "pv": "Barbecho_Suelo_Desnudo", "oi": vid, "consec_override": 2 if is_same_baseline else 0},
             ]
         else:
             years_spec = [
                 {"year": 1, "pv": vid, "oi": "Barbecho_Suelo_Desnudo", "consec_override": 0},
-                {"year": 2, "pv": vid, "oi": "Barbecho_Suelo_Desnudo", "consec_override": 0 if not is_same_baseline else 1},
-                {"year": 3, "pv": vid, "oi": "Barbecho_Suelo_Desnudo", "consec_override": 1 if not is_same_baseline else 2},
+                {"year": 2, "pv": vid, "oi": "Barbecho_Suelo_Desnudo", "consec_override": 1 if is_same_baseline else 0},
+                {"year": 3, "pv": vid, "oi": "Barbecho_Suelo_Desnudo", "consec_override": 2 if is_same_baseline else 0},
             ]
 
         tpl = {
@@ -2683,20 +2988,45 @@ def simulate_all_168_crops(
             "strategy_focus": v.get("beneficio_principal", ""),
             "years": years_spec,
         }
-        ev = _evaluate_template_years(tpl, ctx, force_baseline_penalties=is_same_baseline)
-        viab_adj, viab_note = _evaluate_candidate_viability_for_168(v, ctx)
-        prelim_evals.append((v, ev, viab_adj, viab_note))
+        # En perennes evaluados con cobertura en callejones, no penalizar artificialmente como si estuvieran desnudos solo por coincidir con el cultivo base
+        ev = _evaluate_template_years(
+            tpl,
+            ctx,
+            force_baseline_penalties=(is_same_baseline and modo != "Cobertura_Intercalada_Perenne"),
+        )
+        prelim_evals.append((v, ev, is_same_baseline))
 
-    max_168_net_ha = max(ev["ingreso_neto_ha_3a_mxn"] for _, ev, _, _ in prelim_evals)
+    max_168_net_ha = max(ev["ingreso_neto_ha_3a_mxn"] for _, ev, _ in prelim_evals)
     results: list[dict[str, Any]] = []
 
-    for v, ev, viab_adj, viab_note in prelim_evals:
-        # Calibración balanceada de rentabilidad comparativa entre granos/forrajes y hortofrutícolas
+    for v, ev, is_same_baseline in prelim_evals:
+        agua_3a_m3 = round(ev["demanda_agua_efectiva_3a_mm"] * 10.0 * ctx["hectares"], 1)
+        ahorro_m3 = round(baseline_water_m3 - agua_3a_m3, 1)
+        ahorro_litros = int(round(ahorro_m3 * 1000.0))
+        utilidad_3a = ev["ingreso_neto_total_mxn"]
+        diff_dinero = round(utilidad_3a - baseline_net_mxn, 2)
+
+        viab = _evaluate_crop_survival_and_viability(
+            crop=v,
+            ev=ev,
+            ahorro_m3=ahorro_m3,
+            diff_dinero=diff_dinero,
+            is_same_baseline=is_same_baseline,
+            ctx=ctx,
+        )
+        viab_adj = viab["viab_adj"]
+        drought_light = viab["drought_light"]
+        frost_light = viab["frost_light"]
+        pest_light = viab["pest_light"]
+        prob_pct = viab["probabilidad_supervivencia_pct"]
+        estado_viabilidad = viab["estado_viabilidad"]
+
+        # Calibración balanceada usando la línea base y la viabilidad real del cultivo
         _score_plan_against_baseline(ev, baseline, ctx, profit_ref_3a=92000.0, extra_site_adj=viab_adj)
         net_ha = ev["ingreso_neto_ha_3a_mxn"]
         pest_frost_pen = (
-            (8.0 if ev["semaforo_plagas"] == "ROJO" else 3.0 if ev["semaforo_plagas"] == "AMARILLO" else 0.0)
-            + (8.0 if ev["semaforo_heladas"] == "ROJO" else 3.0 if ev["semaforo_heladas"] == "AMARILLO" else 0.0)
+            (8.0 if pest_light == "ROJO" else 3.0 if pest_light == "AMARILLO" else 0.0)
+            + (8.0 if frost_light == "ROJO" else 3.0 if frost_light == "AMARILLO" else 0.0)
         )
         soft_profit = 0.50 * min(100.0, (net_ha / 92000.0) * 100.0) + 0.50 * (
             (net_ha / max(92000.0, max_168_net_ha)) * 100.0
@@ -2704,51 +3034,17 @@ def simulate_all_168_crops(
         calibrated_profit_score = round(max(5.0, min(100.0, soft_profit - pest_frost_pen)), 1)
         ev["component_scores"]["profit_score"] = calibrated_profit_score
 
-        # Recalcular suitability_score usando profit_score calibrado
         w_sc = ev["component_scores"]["water_score"]
         n_sc = ev["component_scores"]["nitrogen_soil_score"]
-        recomputed_suit = max(
-            5.0,
-            min(
-                100.0,
-                ctx["w_water"] * w_sc + ctx["w_profit"] * calibrated_profit_score + ctx["w_nitrogen"] * n_sc + viab_adj,
-            ),
-        )
+        raw_suit = ctx["w_water"] * w_sc + ctx["w_profit"] * calibrated_profit_score + ctx["w_nitrogen"] * n_sc + viab_adj
+        if estado_viabilidad.startswith("❌"):
+            raw_suit = min(raw_suit, 49.0 + prob_pct * 0.15)
+        recomputed_suit = max(5.0, min(100.0, raw_suit))
 
-        # En zonas frías >=2000m con cultivos cálidos sensibles, reflejar riesgo térmico real
-        frost_light = ev["semaforo_heladas"]
-        if (elev_m >= 2000.0 or ctx["location_id"] == "Los_Lirios_Arteaga") and float(v.get("temp_min_c", 8.0)) >= 14.0:
-            frost_light = "ROJO"
-        drought_light = ev["semaforo_sequia"]
-        if ctx["irrigation_mode"] == "temporal" and "requiere riego" in viab_note and float(v["consumo_agua_mm"]) >= 500.0:
-            drought_light = "ROJO" if drought_light != "ROJO" else drought_light
-
-        agua_3a_m3 = ev["consumo_agua_total_3a_m3"]
-        ahorro_m3 = round(baseline_water_m3 - agua_3a_m3, 1)
-        ahorro_litros = int(round(ahorro_m3 * 1000.0))
-        utilidad_3a = ev["ingreso_neto_total_mxn"]
-        diff_dinero = round(utilidad_3a - baseline_net_mxn, 2)
         ahorro_fert = ev["ahorro_fertilizante_n_total_mxn"]
         meses_prot = int(ev["balance_nitrogeno_y_cobertura"]["meses_suelo_protegido_3a"])
-
-        agua_txt = (
-            f"ahorra {ahorro_m3:,.0f} m³ de agua"
-            if ahorro_m3 >= 0
-            else f"requiere {abs(ahorro_m3):,.0f} m³ adicionales"
-        )
-        dinero_txt = (
-            f"+${diff_dinero:,.0f} MXN vs. tu cultivo actual"
-            if diff_dinero >= 0
-            else f"-${abs(diff_dinero):,.0f} MXN vs. tu cultivo actual"
-        )
-        n_txt = " · fija nitrógeno en el suelo" if v["fija_nitrogeno"] == "Si" else ""
-        caution_txt = f" · Nota: {viab_note}" if viab_note else ""
-        resumen = (
-            f"En {ctx['soil']['zona_label']} ({ctx['hectares']:.1f} ha, {ctx['irrigation_mode']}), "
-            f"{agua_txt}, proyecta ${utilidad_3a:,.0f} MXN ({dinero_txt}), "
-            f"cubre el suelo {meses_prot}/36 meses{n_txt} con riesgo "
-            f"Sequía={drought_light}/Heladas={frost_light}/Plagas={ev['semaforo_plagas']}{caution_txt}."
-        )
+        fam_label = FAMILY_LABELS.get(v["familia_cultivo"], v["familia_cultivo"].replace("_", " "))
+        cat_label = SIAP_CATEGORY_LABELS.get(v["categoria_siap"], v["categoria_siap"].replace("_", " "))
 
         results.append(
             {
@@ -2756,9 +3052,14 @@ def simulate_all_168_crops(
                 "cultivo": v["cultivo"],
                 "nombre_comun": v["nombre_comun"],
                 "familia_cultivo": v["familia_cultivo"],
+                "familia_label": fam_label,
                 "categoria_siap": v["categoria_siap"],
+                "categoria_label": cat_label,
                 "modo_en_kultiva": v["modo_en_kultiva"],
                 "clasificacion_oficial": v["clasificacion_oficial"],
+                "probabilidad_supervivencia_pct": prob_pct,
+                "estado_viabilidad": estado_viabilidad,
+                "fija_nitrogeno": "Sí" if v["fija_nitrogeno"] == "Si" else "No",
                 "suitability_score": round(recomputed_suit, 2),
                 "water_score": w_sc,
                 "profit_score": calibrated_profit_score,
@@ -2773,15 +3074,22 @@ def simulate_all_168_crops(
                 "meses_suelo_protegido_36": meses_prot,
                 "semaforo_sequia": drought_light,
                 "semaforo_heladas": frost_light,
-                "semaforo_plagas": ev["semaforo_plagas"],
+                "semaforo_plagas": pest_light,
                 "municipios_coahuila": v["municipios_coahuila"],
                 "fuente_oficial": v["fuente_oficial"],
-                "resumen_escenario": resumen,
+                "diagnostico_agricultor": viab["diagnostico_agricultor"],
+                "resumen_escenario": viab["diagnostico_agricultor"],
             }
         )
 
     results.sort(
-        key=lambda r: (r["suitability_score"], r["ahorro_agua_vs_actual_m3"], r["diferencia_dinero_vs_actual_mxn"], r["cultivo"]),
+        key=lambda r: (
+            r["suitability_score"],
+            r["probabilidad_supervivencia_pct"],
+            r["ahorro_agua_vs_actual_m3"],
+            r["diferencia_dinero_vs_actual_mxn"],
+            r["cultivo"],
+        ),
         reverse=True,
     )
     for idx, row in enumerate(results, start=1):

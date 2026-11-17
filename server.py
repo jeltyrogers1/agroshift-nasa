@@ -138,126 +138,411 @@ def api_simulate(req: SimulateRequest) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+def _estimate_wrapped_row_height(texts_and_widths: list[tuple[str, int]], min_h: float = 26.0, line_h: float = 14.2) -> float:
+    max_lines = 1
+    for txt, col_w in texts_and_widths:
+        s = str(txt or "")
+        if not s:
+            continue
+        usable = max(12, col_w - 3)
+        total = 0
+        for part in s.splitlines() or [""]:
+            total += max(1, (len(part) + usable - 1) // usable)
+        if total > max_lines:
+            max_lines = total
+    return max(min_h, min(140.0, max_lines * line_h + 8.0))
+
+
 def _build_excel_workbook(sim: dict[str, Any], rows_168: list[dict[str, Any]]) -> bytes:
     wb = Workbook()
 
     header_fill = PatternFill(start_color="0F5132", end_color="0F5132", fill_type="solid")
     sub_fill = PatternFill(start_color="ECFDF5", end_color="ECFDF5", fill_type="solid")
+    guide_fill = PatternFill(start_color="F1F5F9", end_color="F1F5F9", fill_type="solid")
     best_fill = PatternFill(start_color="DCFCE7", end_color="DCFCE7", fill_type="solid")
     zebra_fill = PatternFill(start_color="F8FAFC", end_color="F8FAFC", fill_type="solid")
+    pos_water_fill = PatternFill(start_color="ECFDF5", end_color="ECFDF5", fill_type="solid")
+    neg_water_fill = PatternFill(start_color="FEF2F2", end_color="FEF2F2", fill_type="solid")
+
     light_fills = {
         "VERDE": PatternFill(start_color="DCFCE7", end_color="DCFCE7", fill_type="solid"),
         "AMARILLO": PatternFill(start_color="FEF3C7", end_color="FEF3C7", fill_type="solid"),
         "ROJO": PatternFill(start_color="FEE2E2", end_color="FEE2E2", fill_type="solid"),
     }
     light_fonts = {
-        "VERDE": Font(bold=True, color="166534"),
-        "AMARILLO": Font(bold=True, color="92400E"),
-        "ROJO": Font(bold=True, color="991B1B"),
+        "VERDE": Font(name="Calibri", size=10, bold=True, color="166534"),
+        "AMARILLO": Font(name="Calibri", size=10, bold=True, color="92400E"),
+        "ROJO": Font(name="Calibri", size=10, bold=True, color="991B1B"),
     }
 
-    title_font = Font(name="Calibri", size=14, bold=True, color="0F5132")
+    banner_font = Font(name="Calibri", size=13, bold=True, color="FFFFFF")
     section_font = Font(name="Calibri", size=11, bold=True, color="0F5132")
     header_font = Font(name="Calibri", size=10, bold=True, color="FFFFFF")
     body_font = Font(name="Calibri", size=10, color="0F172A")
     bold_font = Font(name="Calibri", size=10, bold=True, color="0F172A")
+    muted_font = Font(name="Calibri", size=9, color="64748B")
+    guide_font = Font(name="Calibri", size=9, italic=True, color="334155")
+    pos_font = Font(name="Calibri", size=10, bold=True, color="166534")
+    neg_font = Font(name="Calibri", size=10, bold=True, color="991B1B")
+
     thin_side = Side(style="thin", color="CBD5E1")
     cell_border = Border(left=thin_side, right=thin_side, top=thin_side, bottom=thin_side)
 
+    ctx = sim["parcel_context"]
+    weights = sim.get("normalized_weights", {})
+    w_agua = int(round(float(weights.get("weight_water", 0.33)) * 100))
+    w_prof = int(round(float(weights.get("weight_profit", 0.33)) * 100))
+    w_nit = int(round(float(weights.get("weight_nitrogen", 0.34)) * 100))
+    regimen_label = "Riego / Riego de Auxilio" if sim["irrigation_mode"] == "riego" else "Solo Temporal (secano)"
+    rain_pct = int(round(float(sim.get("rain_reduction_pct", 0.0)) * 100))
+    rain_pct_str = "Lluvia histórica normal (0%)" if rain_pct == 0 else f"Sequía -{rain_pct}%"
+    muni_clean = str(sim["municipio"]).replace("_", " ")
+    soil_tag = " (Calibrado manual)" if sim.get("is_custom_soil") else " (Perfil regional)"
+
+    cnt_muy_viable = sum(1 for r in rows_168 if str(r.get("estado_viabilidad", "")).startswith("✅"))
+    cnt_con_manejo = sum(1 for r in rows_168 if str(r.get("estado_viabilidad", "")).startswith("⚠️"))
+    cnt_alto_riesgo = sum(1 for r in rows_168 if str(r.get("estado_viabilidad", "")).startswith("❌"))
+
     # =========================================================================
-    # PESTAÑA 1: Top_5_Recomendaciones
+    # HOJA 1 (PRINCIPAL): Evaluacion_168_Cultivos
     # =========================================================================
     ws1 = wb.active
-    ws1.title = "Top_5_Recomendaciones"
-    ws1["A1"] = "Kultiva · Reporte Satelital NASA y Top 5 Rotaciones Recomendadas (Coahuila)"
-    ws1["A1"].font = title_font
-    ws1.merge_cells("A1:I1")
+    ws1.title = "Evaluacion_168_Cultivos"
 
-    ctx = sim["parcel_context"]
-    meta_rows = [
-        ("Parcela / Estación", f"{sim['zona_label']} ({sim['municipio']})", "Superficie (ha)", sim["hectares"]),
-        ("Cultivo Base Solicitado", sim["requested_crop"], "Variedad Oficial Resuelta", sim["nombre_comun"]),
-        ("Familia / Categoría SIAP", f"{sim['familia_cultivo']} · {sim['categoria_siap']}", "Fuente Oficial", sim["fuente_oficial"]),
-        ("Régimen Hídrico", sim["irrigation_mode"].capitalize(), "Destino Productivo", sim["market_goal"].capitalize()),
-        ("Fertilización / Labranza", f"{sim['fertilizer_label']} · {sim['tillage_label']}", "Preocupaciones", sim["main_concern_label"]),
+    ws1["A1"] = "KULTIVA · EVALUACIÓN DE LOS 168 CULTIVOS OFICIALES PARA TU PARCELA (COAHUILA)"
+    ws1["A1"].font = banner_font
+    ws1["A1"].fill = header_fill
+    ws1["A1"].alignment = Alignment(horizontal="left", vertical="center", indent=1)
+    ws1.merge_cells("A1:T1")
+    ws1.row_dimensions[1].height = 30
+
+    # Bloque Superior (Filas 2 a 6): Ficha de Parcela, Decisiones y Resumen Rápido
+    card_rows_1 = [
         (
-            "Suelo y Altitud",
-            f"{ctx['tipo_suelo_label']} ({ctx['textura_label']}) · MO {ctx['materia_organica_pct']}% · {ctx['local_elevation_m']} msnm · Pend. {ctx['pendiente_pct']}%",
+            "Parcela / Municipio",
+            f"{sim['zona_label']} ({muni_clean})",
+            "Altitud",
+            f"{int(round(float(ctx['local_elevation_m']))):,} msnm",
+            "Suelo y % MO",
+            f"{ctx['tipo_suelo_label']} ({ctx['textura_label']}) · MO {ctx['materia_organica_pct']}% · Pend. {ctx['pendiente_pct']}%{soil_tag}",
+            "Superficie",
+            f"{float(sim['hectares']):.1f} ha",
+        ),
+        (
+            "Cultivo Actual",
+            f"{sim['nombre_comun']} ({sim['familia_cultivo'].replace('_', ' ')})",
+            "Régimen Hídrico",
+            regimen_label,
+            "Fertilizante / Labranza",
+            f"{sim['fertilizer_label']} · {sim['tillage_label']}",
+            "Destino",
+            sim["market_goal"].capitalize(),
+        ),
+        (
+            "Preocupaciones",
+            sim["main_concern_label"],
             "Clima Simulado",
-            f"Lluvia {ctx['annual_simulated_rain_mm']} mm/año (hist. {ctx['annual_historical_rain_mm']} mm) · +{sim['temp_increase_c']:.1f} °C",
+            f"{ctx['annual_simulated_rain_mm']} mm/año ({rain_pct_str}) · +{sim['temp_increase_c']:.1f} °C",
+            "Prioridades Elegidas",
+            f"Agua {w_agua}% · Ganancia {w_prof}% · Suelo/N {w_nit}%",
+            "Fuente Base",
+            sim["fuente_oficial"],
         ),
     ]
-    row_idx = 3
-    for k1, v1, k2, v2 in meta_rows:
-        ws1.cell(row=row_idx, column=1, value=k1).font = bold_font
-        ws1.cell(row=row_idx, column=1).fill = sub_fill
-        ws1.cell(row=row_idx, column=2, value=v1).font = body_font
-        ws1.merge_cells(start_row=row_idx, start_column=2, end_row=row_idx, end_column=4)
-        ws1.cell(row=row_idx, column=5, value=k2).font = bold_font
-        ws1.cell(row=row_idx, column=5).fill = sub_fill
-        ws1.cell(row=row_idx, column=6, value=v2).font = body_font
-        ws1.merge_cells(start_row=row_idx, start_column=6, end_row=row_idx, end_column=9)
-        for c in range(1, 10):
-            ws1.cell(row=row_idx, column=c).border = cell_border
-            ws1.cell(row=row_idx, column=c).alignment = Alignment(vertical="center", wrap_text=True)
-        ws1.row_dimensions[row_idx].height = 22
-        row_idx += 1
+    for r_num, (k1, v1, k2, v2, k3, v3, k4, v4) in enumerate(card_rows_1, start=2):
+        blocks = [
+            ((1, 2), k1, True),
+            ((3, 5), v1, False),
+            ((6, 6), k2, True),
+            ((7, 8), v2, False),
+            ((9, 10), k3, True),
+            ((11, 15), v3, False),
+            ((16, 16), k4, True),
+            ((17, 20), v4, False),
+        ]
+        for (c_start, c_end), val, is_lbl in blocks:
+            cell = ws1.cell(row=r_num, column=c_start, value=val)
+            cell.font = bold_font if is_lbl else body_font
+            if is_lbl:
+                cell.fill = sub_fill
+            if c_end > c_start:
+                ws1.merge_cells(start_row=r_num, start_column=c_start, end_row=r_num, end_column=c_end)
+            for c_i in range(c_start, c_end + 1):
+                mc = ws1.cell(row=r_num, column=c_i)
+                mc.border = cell_border
+                mc.alignment = Alignment(vertical="center", horizontal="left", wrap_text=True)
+                if is_lbl:
+                    mc.fill = sub_fill
+        ws1.row_dimensions[r_num].height = 24
 
-    row_idx += 1
-    ws1.cell(row=row_idx, column=1, value="Comparativa Plan Actual (Línea Base) vs. Top 5 Recomendaciones a 3 Años").font = section_font
-    ws1.merge_cells(start_row=row_idx, start_column=1, end_row=row_idx, end_column=10)
-    row_idx += 1
+    # Fila 5: Resumen rápido del catálogo (cuántos de 168 son Muy Viables / Con Manejo / Alto Riesgo)
+    ws1.cell(row=5, column=1, value="Resumen Catálogo (168)").font = bold_font
+    ws1.merge_cells("A5:B5")
+    for c_i in (1, 2):
+        ws1.cell(row=5, column=c_i).fill = sub_fill
+        ws1.cell(row=5, column=c_i).border = cell_border
+        ws1.cell(row=5, column=c_i).alignment = Alignment(vertical="center", horizontal="left")
 
-    headers_1 = [
+    summary_pills = [
+        (3, 6, f"✅ Muy Viables en tu Parcela: {cnt_muy_viable} de 168", light_fills["VERDE"], light_fonts["VERDE"]),
+        (7, 11, f"⚠️ Viables con Manejo / Cuidados: {cnt_con_manejo} de 168", light_fills["AMARILLO"], light_fonts["AMARILLO"]),
+        (12, 16, f"❌ Alto Riesgo de Pérdida: {cnt_alto_riesgo} de 168", light_fills["ROJO"], light_fonts["ROJO"]),
+        (17, 20, "Comparado vs. Plan Actual + Top 5 Rotaciones en Hoja 2", guide_fill, guide_font),
+    ]
+    for c_start, c_end, val, fill_obj, font_obj in summary_pills:
+        c0 = ws1.cell(row=5, column=c_start, value=val)
+        c0.font = font_obj
+        ws1.merge_cells(start_row=5, start_column=c_start, end_row=5, end_column=c_end)
+        for c_i in range(c_start, c_end + 1):
+            mc = ws1.cell(row=5, column=c_i)
+            mc.fill = fill_obj
+            mc.border = cell_border
+            mc.alignment = Alignment(vertical="center", horizontal="center" if c_start < 17 else "left", wrap_text=True)
+    ws1.row_dimensions[5].height = 24
+
+    # Fila 6: Guía de lectura rápida + Fila 7 separador
+    ws1.cell(
+        row=6,
+        column=1,
+        value="Cómo leer esta tabla: Cada fila muestra qué pasaría en tu parcela si siembras ese cultivo durante 3 años frente a seguir con tu cultivo actual. Usa los filtros de la fila 8 para filtrar por Viabilidad, Agua o Riesgo.",
+    )
+    ws1.merge_cells("A6:T6")
+    for c_i in range(1, 21):
+        mc = ws1.cell(row=6, column=c_i)
+        mc.fill = guide_fill
+        mc.font = guide_font
+        mc.border = cell_border
+        mc.alignment = Alignment(vertical="center", horizontal="left", wrap_text=True)
+    ws1.row_dimensions[6].height = 22
+    ws1.row_dimensions[7].height = 10
+
+    # Fila 8: Encabezados de Tabla Principal (congelados + autofiltro)
+    headers_168 = [
+        "Posición (#)",
+        "Viabilidad en tu Parcela",
+        "Prob. de Supervivencia / Éxito (%)",
+        "Cultivo y Variedad Oficial",
+        "Categoría / Grupo",
+        "Agua que Ahorras en 3 Años (m³)",
+        "Agua que Ahorras (Litros)",
+        "Agua Total que Necesita en 3 Años (m³)",
+        "Ganancia Neta Estimada en 3 Años (MXN)",
+        "Dinero Extra vs. tu Cultivo Actual (MXN)",
+        "Ahorro en Fertilizante (MXN)",
+        "¿Fija Nitrógeno?",
+        "Meses con Suelo Protegido (de 36)",
+        "Riesgo Sequía",
+        "Riesgo Heladas",
+        "Riesgo Plagas",
+        "¿Qué pasaría si lo siembras en tu parcela?",
+        "Zonas Recomendadas en Coahuila",
+        "Respaldo Científico Oficial",
+        "ID Técnico (Referencia)",
+    ]
+    header_row_168 = 8
+    for col_i, h in enumerate(headers_168, start=1):
+        c = ws1.cell(row=header_row_168, column=col_i, value=h)
+        c.font = header_font
+        c.fill = header_fill
+        c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        c.border = cell_border
+    ws1.row_dimensions[header_row_168].height = 36
+
+    widths_168 = [12, 28, 17, 42, 30, 19, 19, 19, 21, 22, 18, 13, 17, 13, 13, 13, 64, 38, 36, 30]
+    for r_offset, item in enumerate(rows_168, start=header_row_168 + 1):
+        cat_grp = f"{item.get('categoria_label', item['categoria_siap'].replace('_', ' '))} · {item.get('familia_label', item['familia_cultivo'].replace('_', ' '))}"
+        ahorro_m3 = round(float(item["ahorro_agua_vs_actual_m3"]), 1)
+        diff_mxn = round(float(item["diferencia_dinero_vs_actual_mxn"]), 2)
+        viab_txt = str(item.get("estado_viabilidad", ""))
+        diag_txt = str(item.get("diagnostico_agricultor") or item.get("resumen_escenario", ""))
+
+        row_vals = [
+            int(item["ranking"]),
+            viab_txt,
+            int(item.get("probabilidad_supervivencia_pct", round(float(item["suitability_score"])))),
+            item["nombre_comun"],
+            cat_grp,
+            ahorro_m3,
+            int(item["ahorro_agua_vs_actual_litros"]),
+            round(float(item["agua_consumida_3a_m3"]), 1),
+            round(float(item["utilidad_neta_3a_mxn"]), 2),
+            diff_mxn,
+            round(float(item["ahorro_fertilizante_3a_mxn"]), 2),
+            item.get("fija_nitrogeno", "No"),
+            int(item["meses_suelo_protegido_36"]),
+            item["semaforo_sequia"],
+            item["semaforo_heladas"],
+            item["semaforo_plagas"],
+            diag_txt,
+            item["municipios_coahuila"],
+            item["fuente_oficial"],
+            item["cultivo"],
+        ]
+
+        is_top5 = item["ranking"] <= 5
+        for col_i, val in enumerate(row_vals, start=1):
+            c = ws1.cell(row=r_offset, column=col_i, value=val)
+            c.border = cell_border
+            c.font = bold_font if (is_top5 and col_i in (1, 4)) else body_font
+            c.alignment = Alignment(
+                vertical="center",
+                wrap_text=col_i in (2, 4, 5, 17, 18, 19),
+                horizontal="center" if col_i in (1, 3, 12, 13, 14, 15, 16) else "left",
+            )
+            if is_top5:
+                c.fill = sub_fill
+            elif r_offset % 2 == 0:
+                c.fill = zebra_fill
+
+            if col_i == 2:
+                if viab_txt.startswith("✅"):
+                    c.fill = light_fills["VERDE"]
+                    c.font = light_fonts["VERDE"]
+                elif viab_txt.startswith("⚠️"):
+                    c.fill = light_fills["AMARILLO"]
+                    c.font = light_fonts["AMARILLO"]
+                elif viab_txt.startswith("❌"):
+                    c.fill = light_fills["ROJO"]
+                    c.font = light_fonts["ROJO"]
+            elif col_i == 3:
+                c.number_format = '0"%"'
+                c.font = bold_font
+            elif col_i in (6, 7):
+                c.number_format = "+#,##0;-#,##0;0"
+                c.alignment = Alignment(horizontal="right", vertical="center")
+                if ahorro_m3 >= 0:
+                    c.font = pos_font
+                    if not is_top5:
+                        c.fill = pos_water_fill
+                else:
+                    c.font = neg_font
+                    if not is_top5:
+                        c.fill = neg_water_fill
+            elif col_i == 8:
+                c.number_format = "#,##0"
+                c.alignment = Alignment(horizontal="right", vertical="center")
+            elif col_i in (9, 11):
+                c.number_format = "$#,##0"
+                c.alignment = Alignment(horizontal="right", vertical="center")
+            elif col_i == 10:
+                c.number_format = "+$#,##0;-$#,##0;$0"
+                c.alignment = Alignment(horizontal="right", vertical="center")
+                c.font = pos_font if diff_mxn > 0 else (neg_font if diff_mxn < 0 else body_font)
+            elif col_i in (14, 15, 16) and val in light_fills:
+                c.fill = light_fills[val]
+                c.font = light_fonts[val]
+            elif col_i == 20:
+                c.font = muted_font
+
+        ws1.row_dimensions[r_offset].height = _estimate_wrapped_row_height(
+            [(diag_txt, 64), (item["nombre_comun"], 42), (item["municipios_coahuila"], 38), (item["fuente_oficial"], 36)],
+            min_h=28.0,
+        )
+
+    ws1.auto_filter.ref = f"A{header_row_168}:T{header_row_168 + len(rows_168)}"
+    ws1.freeze_panes = f"A{header_row_168 + 1}"
+    for col_i, w in enumerate(widths_168, start=1):
+        ws1.column_dimensions[get_column_letter(col_i)].width = w
+
+    # =========================================================================
+    # HOJA 2: Top_5_Rotaciones_3_Anos
+    # =========================================================================
+    ws2 = wb.create_sheet(title="Top_5_Rotaciones_3_Anos")
+    ws2["A1"] = "Kultiva · Comparativa Plan Actual vs. Top 5 Rotaciones a 3 Años (Coahuila)"
+    ws2["A1"].font = banner_font
+    ws2["A1"].fill = header_fill
+    ws2["A1"].alignment = Alignment(horizontal="left", vertical="center", indent=1)
+    ws2.merge_cells("A1:S1")
+    ws2.row_dimensions[1].height = 28
+
+    meta_rows_2 = [
+        ("Parcela / Municipio", f"{sim['zona_label']} ({muni_clean})", "Superficie", f"{float(sim['hectares']):.1f} ha"),
+        ("Cultivo Base Actual", sim["nombre_comun"], "Régimen Hídrico", regimen_label),
+        (
+            "Suelo y Clima",
+            f"{ctx['tipo_suelo_label']} ({ctx['textura_label']}) · MO {ctx['materia_organica_pct']}% · {int(round(float(ctx['local_elevation_m']))):,} msnm · Lluvia {ctx['annual_simulated_rain_mm']} mm/año (+{sim['temp_increase_c']:.1f} °C)",
+            "Prioridades y Preocupaciones",
+            f"Agua {w_agua}% · Ganancia {w_prof}% · Suelo/N {w_nit}% | {sim['main_concern_label']}",
+        ),
+    ]
+    for r_i, (k1, v1, k2, v2) in enumerate(meta_rows_2, start=3):
+        ws2.cell(row=r_i, column=1, value=k1).font = bold_font
+        ws2.cell(row=r_i, column=1).fill = sub_fill
+        ws2.merge_cells(start_row=r_i, start_column=1, end_row=r_i, end_column=2)
+        ws2.cell(row=r_i, column=3, value=v1).font = body_font
+        ws2.merge_cells(start_row=r_i, start_column=3, end_row=r_i, end_column=10)
+        ws2.cell(row=r_i, column=11, value=k2).font = bold_font
+        ws2.cell(row=r_i, column=11).fill = sub_fill
+        ws2.merge_cells(start_row=r_i, start_column=11, end_row=r_i, end_column=12)
+        ws2.cell(row=r_i, column=13, value=v2).font = body_font
+        ws2.merge_cells(start_row=r_i, start_column=13, end_row=r_i, end_column=19)
+        for c_i in range(1, 20):
+            mc = ws2.cell(row=r_i, column=c_i)
+            mc.border = cell_border
+            mc.alignment = Alignment(vertical="center", wrap_text=True)
+            if c_i in (1, 2, 11, 12):
+                mc.fill = sub_fill
+        ws2.row_dimensions[r_i].height = 24
+
+    ws2.row_dimensions[6].height = 10
+    ws2["A6"] = "Comparativa del Plan Actual (Línea Base) vs. Top 5 Rotaciones Combinadas a 3 Años"
+    ws2["A6"].font = section_font
+    ws2.merge_cells("A6:S6")
+    ws2.row_dimensions[6].height = 22
+
+    headers_2 = [
         "Posición",
-        "ID Plan",
-        "Nombre del Plan",
+        "Plan de Rotación (3 Años)",
         "Afinidad (%)",
-        "Utilidad Neta 3A (MXN)",
-        "Diferencia vs Actual (MXN)",
-        "Consumo Agua 3A (m³)",
-        "Ahorro Agua 3A (m³)",
-        "Ahorro Agua (L)",
+        "Ganancia Neta 3 Años (MXN)",
+        "Dinero Extra vs. Actual (MXN)",
+        "Agua Total 3 Años (m³)",
+        "Agua que Ahorras (m³)",
+        "Agua que Ahorras (Litros)",
         "Ahorro Fertilizante N (MXN)",
-        "Suelo Cubierto (/36 m)",
+        "Meses Suelo Protegido (/36)",
         "Ciclos Fijación N",
-        "Sequía",
-        "Heladas",
-        "Plagas",
+        "Riesgo Sequía",
+        "Riesgo Heladas",
+        "Riesgo Plagas",
         "Año 1 (PV / OI)",
         "Año 2 (PV / OI)",
         "Año 3 (PV / OI)",
-        "Estrategia y Evidencia NASA",
+        "Resumen y Evidencia NASA",
+        "ID Técnico Plan",
     ]
-    header_row_1 = row_idx
-    for col_i, h in enumerate(headers_1, start=1):
-        cell = ws1.cell(row=header_row_1, column=col_i, value=h)
-        cell.font = header_font
-        cell.fill = header_fill
-        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-        cell.border = cell_border
-    ws1.row_dimensions[header_row_1].height = 28
+    header_row_2 = 7
+    for col_i, h in enumerate(headers_2, start=1):
+        c = ws2.cell(row=header_row_2, column=col_i, value=h)
+        c.font = header_font
+        c.fill = header_fill
+        c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        c.border = cell_border
+    ws2.row_dimensions[header_row_2].height = 32
 
     base_plan = next((p for p in sim["plans"] if p["plan_id"] == "plan_actual"), sim["plans"][0])
     base_net = float(base_plan["ingreso_neto_total_mxn"])
 
+    row_cursor = header_row_2
     for p in sim["plans"]:
-        row_idx += 1
+        row_cursor += 1
         pos_label = f"#{p['rank']} Recomendada" if p.get("rank") == 1 else (f"#{p['rank']}" if p.get("rank") else "Línea Base")
         bal = p.get("balance_nitrogeno_y_cobertura", {})
-        y_strs = [f"PV: {y['pv_crop_label']} | OI: {y['oi_crop_label']}" for y in p.get("years", [])]
+        y_strs = [f"PV: {y['pv_crop_label']}\nOI: {y['oi_crop_label']}" for y in p.get("years", [])]
         while len(y_strs) < 3:
             y_strs.append("")
+        diff_mxn = round(float(p["ingreso_neto_total_mxn"]) - base_net, 2)
+        ahorro_m3 = round(float(p.get("ahorro_agua_m3", 0.0)), 1)
+        summary_txt = str(p.get("nasa_evidence_summary", ""))
 
         vals = [
             pos_label,
-            p["plan_id"],
             p["plan_name"],
-            round(float(p["suitability_score"]), 2),
+            round(float(p["suitability_score"]), 1),
             round(float(p["ingreso_neto_total_mxn"]), 2),
-            round(float(p["ingreso_neto_total_mxn"]) - base_net, 2),
+            diff_mxn,
             round(float(p.get("consumo_agua_total_3a_m3", 0.0)), 1),
-            round(float(p.get("ahorro_agua_m3", 0.0)), 1),
+            ahorro_m3,
             int(round(float(p.get("ahorro_agua_litros", 0)))),
             round(float(p.get("ahorro_fertilizante_n_total_mxn", 0.0)), 2),
             int(bal.get("meses_suelo_protegido_3a", 0)),
@@ -268,137 +553,54 @@ def _build_excel_workbook(sim: dict[str, Any], rows_168: list[dict[str, Any]]) -
             y_strs[0],
             y_strs[1],
             y_strs[2],
-            p.get("nasa_evidence_summary", ""),
+            summary_txt,
+            p["plan_id"],
         ]
         is_best = p.get("rank") == 1
         for col_i, val in enumerate(vals, start=1):
-            c = ws1.cell(row=row_idx, column=col_i, value=val)
-            c.font = bold_font if (is_best or col_i in (1, 3)) else body_font
-            c.border = cell_border
-            c.alignment = Alignment(vertical="center", wrap_text=True, horizontal="center" if col_i in (1, 4, 11, 12, 13, 14, 15) else "left")
-            if is_best:
-                c.fill = best_fill
-            elif p["plan_id"] != "plan_actual" and (row_idx % 2 == 0):
-                c.fill = zebra_fill
-
-            if col_i == 4:
-                c.number_format = "0.0"
-            elif col_i in (5, 6, 10):
-                c.number_format = "$#,##0"
-                c.alignment = Alignment(horizontal="right", vertical="center")
-            elif col_i in (7, 8, 9):
-                c.number_format = "#,##0"
-                c.alignment = Alignment(horizontal="right", vertical="center")
-            elif col_i in (13, 14, 15) and val in light_fills:
-                c.fill = light_fills[val]
-                c.font = light_fonts[val]
-        ws1.row_dimensions[row_idx].height = 46
-
-    ws1.auto_filter.ref = f"A{header_row_1}:S{row_idx}"
-    ws1.freeze_panes = f"A{header_row_1 + 1}"
-    widths_1 = [18, 22, 34, 13, 20, 22, 18, 18, 18, 20, 16, 14, 12, 12, 12, 34, 34, 34, 58]
-    for col_i, w in enumerate(widths_1, start=1):
-        ws1.column_dimensions[get_column_letter(col_i)].width = w
-
-    # =========================================================================
-    # PESTAÑA 2: Simulacion_168_Cultivos
-    # =========================================================================
-    ws2 = wb.create_sheet(title="Simulacion_168_Cultivos")
-    headers_2 = [
-        "Ranking",
-        "ID Cultivo",
-        "Nombre Común Oficial",
-        "Familia SIAP",
-        "Categoría SIAP",
-        "Modo en Kultiva",
-        "Clasificación Oficial",
-        "Afinidad (%)",
-        "Puntaje Agua",
-        "Puntaje Rentabilidad",
-        "Puntaje Suelo y N",
-        "Consumo Agua Base (mm)",
-        "Agua Consumida 3A (m³)",
-        "Ahorro Agua vs Actual (m³)",
-        "Ahorro Agua vs Actual (L)",
-        "Utilidad Neta 3A (MXN)",
-        "Diferencia Dinero vs Actual (MXN)",
-        "Ahorro Fertilizante 3A (MXN)",
-        "Meses Suelo Protegido (/36)",
-        "Semáforo Sequía",
-        "Semáforo Heladas",
-        "Semáforo Plagas",
-        "Municipios Coahuila",
-        "Fuente Oficial",
-        "Resumen de Escenario (Qué pasaría en tu parcela)",
-    ]
-    for col_i, h in enumerate(headers_2, start=1):
-        c = ws2.cell(row=1, column=col_i, value=h)
-        c.font = header_font
-        c.fill = header_fill
-        c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-        c.border = cell_border
-    ws2.row_dimensions[1].height = 30
-
-    for r_idx, item in enumerate(rows_168, start=2):
-        row_vals = [
-            int(item["ranking"]),
-            item["cultivo"],
-            item["nombre_comun"],
-            item["familia_cultivo"],
-            item["categoria_siap"],
-            item["modo_en_kultiva"],
-            item["clasificacion_oficial"],
-            round(float(item["suitability_score"]), 2),
-            round(float(item["water_score"]), 1),
-            round(float(item["profit_score"]), 1),
-            round(float(item["nitrogen_soil_score"]), 1),
-            round(float(item["consumo_agua_base_mm"]), 1),
-            round(float(item["agua_consumida_3a_m3"]), 1),
-            round(float(item["ahorro_agua_vs_actual_m3"]), 1),
-            int(item["ahorro_agua_vs_actual_litros"]),
-            round(float(item["utilidad_neta_3a_mxn"]), 2),
-            round(float(item["diferencia_dinero_vs_actual_mxn"]), 2),
-            round(float(item["ahorro_fertilizante_3a_mxn"]), 2),
-            int(item["meses_suelo_protegido_36"]),
-            item["semaforo_sequia"],
-            item["semaforo_heladas"],
-            item["semaforo_plagas"],
-            item["municipios_coahuila"],
-            item["fuente_oficial"],
-            item["resumen_escenario"],
-        ]
-        is_top5 = item["ranking"] <= 5
-        for col_i, val in enumerate(row_vals, start=1):
-            c = ws2.cell(row=r_idx, column=col_i, value=val)
-            c.font = bold_font if (is_top5 and col_i in (1, 3, 8)) else body_font
+            c = ws2.cell(row=row_cursor, column=col_i, value=val)
+            c.font = bold_font if (is_best or col_i in (1, 2)) else body_font
             c.border = cell_border
             c.alignment = Alignment(
                 vertical="center",
-                wrap_text=col_i in (3, 7, 23, 24, 25),
-                horizontal="center" if col_i in (1, 19, 20, 21, 22) else "left",
+                wrap_text=col_i in (2, 15, 16, 17, 18),
+                horizontal="center" if col_i in (1, 3, 10, 11, 12, 13, 14) else "left",
             )
-            if is_top5:
-                c.fill = sub_fill
-            elif r_idx % 2 == 1:
+            if is_best:
+                c.fill = best_fill
+            elif p["plan_id"] != "plan_actual" and (row_cursor % 2 == 0):
                 c.fill = zebra_fill
 
-            if col_i in (8, 9, 10, 11):
-                c.number_format = "0.0"
-                c.alignment = Alignment(horizontal="right", vertical="center")
-            elif col_i in (12, 13, 14, 15):
-                c.number_format = "#,##0"
-                c.alignment = Alignment(horizontal="right", vertical="center")
-            elif col_i in (16, 17, 18):
+            if col_i == 3:
+                c.number_format = '0.0"%"'
+            elif col_i in (4, 9):
                 c.number_format = "$#,##0"
                 c.alignment = Alignment(horizontal="right", vertical="center")
-            elif col_i in (20, 21, 22) and val in light_fills:
+            elif col_i == 5:
+                c.number_format = "+$#,##0;-$#,##0;$0"
+                c.alignment = Alignment(horizontal="right", vertical="center")
+                c.font = pos_font if diff_mxn > 0 else (neg_font if diff_mxn < 0 else body_font)
+            elif col_i == 6:
+                c.number_format = "#,##0"
+                c.alignment = Alignment(horizontal="right", vertical="center")
+            elif col_i in (7, 8):
+                c.number_format = "+#,##0;-#,##0;0"
+                c.alignment = Alignment(horizontal="right", vertical="center")
+                c.font = pos_font if ahorro_m3 > 0 else (neg_font if ahorro_m3 < 0 else body_font)
+            elif col_i in (12, 13, 14) and val in light_fills:
                 c.fill = light_fills[val]
                 c.font = light_fonts[val]
-        ws2.row_dimensions[r_idx].height = 28
+            elif col_i == 19:
+                c.font = muted_font
 
-    ws2.auto_filter.ref = f"A1:Y{len(rows_168) + 1}"
-    ws2.freeze_panes = "A2"
-    widths_2 = [10, 34, 46, 24, 24, 26, 32, 13, 13, 16, 16, 18, 19, 20, 20, 20, 22, 20, 18, 14, 14, 14, 42, 42, 62]
+        ws2.row_dimensions[row_cursor].height = _estimate_wrapped_row_height(
+            [(y_strs[0], 36), (y_strs[1], 36), (y_strs[2], 36), (summary_txt, 64)],
+            min_h=44.0,
+        )
+
+    ws2.auto_filter.ref = f"A{header_row_2}:S{row_cursor}"
+    ws2.freeze_panes = f"A{header_row_2 + 1}"
+    widths_2 = [18, 36, 13, 21, 22, 18, 18, 19, 20, 17, 15, 13, 13, 13, 36, 36, 36, 64, 24]
     for col_i, w in enumerate(widths_2, start=1):
         ws2.column_dimensions[get_column_letter(col_i)].width = w
 

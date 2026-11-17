@@ -189,7 +189,10 @@
 
     const frostPv = sum(pvRows, (m) => m.frost_risk_days_mean);
     const frostOi = sum(oiRows, (m) => m.frost_risk_days_mean);
+    const minTempPv = Math.min(...pvRows.map((m) => m.t2m_min_c_mean)) + tempInc;
     const minTempOi = Math.min(...oiRows.map((m) => m.t2m_min_c_mean)) + tempInc;
+    const maxTempPv = Math.max(...pvRows.map((m) => m.t2m_max_c_mean)) + tempInc;
+    const maxTempOi = Math.max(...oiRows.map((m) => m.t2m_max_c_mean)) + tempInc;
     const pestPv = sum(pvRows, (m) => m.pest_risk_days_mean);
     const pestOi = sum(oiRows, (m) => m.pest_risk_days_mean);
     const bareExpected = sum(monthsData, (m) => m.bare_soil_or_stress_freq);
@@ -206,7 +209,10 @@
       frost_days_pv: frostPv,
       frost_days_oi: frostOi,
       frost_days_annual: frostPv + frostOi,
+      min_temp_pv_c: minTempPv,
       min_temp_oi_c: minTempOi,
+      max_temp_pv_c: maxTempPv,
+      max_temp_oi_c: maxTempOi,
       pest_days_annual: (pestPv + pestOi) * (1 + 0.12 * tempInc),
       bare_alert_expected_months_yr: bareExpected,
     };
@@ -1029,15 +1035,49 @@
       return `Con base en 10 años de datos NASA POWER (MERRA-2/IMERG) y MODIS MOD13Q1 en ${soil.zona_label}, ${rainClause}, el monocultivo continuo de ${cInfo.cultivo_label} deja el suelo desnudo 18 meses en 3 años (exponiendo la parcela en los ${modisMo} meses críticos/año de baja cobertura detectados por MODIS NDVI), eleva +70% la presión de plagas hacia el Año 3 (${fmtNum1(plan.years[2].effective_pest_days)} días equivalentes)${fw} y coloca el diagnóstico de sequía en ${LIGHT_PHRASE[plan.semaforo_sequia]}.`;
     }
 
+    const balPlan = plan.balance_nitrogen_y_cobertura;
+    const balBase = basePlan.balance_nitrogen_y_cobertura;
+    const mesesProt = Number(balPlan.meses_suelo_protegido_3a || 0);
+    const nCyclesPlan = Number(balPlan.ciclos_fijacion_nitrogeno_3a || 0);
+    const baseBare = Number(balBase.meses_suelo_desnudo_3a || 0);
+    const currentCiclo = cInfo.ciclo_norm || cInfo.ciclo_siembra;
+
     const used = [];
     for (const y of plan.years) {
-      if (y.pv_crop_id !== "Barbecho_Suelo_Desnudo" && !used.includes(y.pv_crop_label)) used.push(y.pv_crop_label);
-      if (y.oi_crop_id !== "Barbecho_Suelo_Desnudo" && !used.includes(y.oi_crop_label)) used.push(y.oi_crop_label);
+      for (const [lblKey, idKey] of [["pv_crop_label", "pv_crop_id"], ["oi_crop_label", "oi_crop_id"]]) {
+        const cid = y[idKey];
+        if (!cid || cid === "Barbecho_Suelo_Desnudo") continue;
+        const rawLbl = String(y[lblKey] || "");
+        if (isOrch && cid === cInfo.cultivo) {
+          if (rawLbl.includes("+")) {
+            const after = rawLbl.split("+", 2)[1].replace("(en callejones)", "").trim();
+            if (after && !used.includes(after)) used.push(after);
+          }
+          continue;
+        }
+        const cleanLbl = rawLbl.replace("(cobertura en callejones)", "").trim();
+        if (cleanLbl && cleanLbl !== cInfo.cultivo_label && !used.includes(cleanLbl)) used.push(cleanLbl);
+      }
     }
+    if (!used.length) {
+      for (const y of plan.years) {
+        if (y.oi_crop_id !== "Barbecho_Suelo_Desnudo") {
+          const clean = String(y.oi_crop_label || "").replace("(cobertura en callejones)", "").trim();
+          if (clean && !used.includes(clean)) used.push(clean);
+        }
+      }
+    }
+
     const waterClause =
       plan.ahorro_agua_m3 >= 0
         ? `ahorra ${fmtInt(plan.ahorro_agua_m3)} m³ de agua en 3 años`
-        : `requiere ${fmtInt(Math.abs(plan.ahorro_agua_m3))} m³ adicionales para sostener cobertura perenne fijadora de nitrógeno`;
+        : nCyclesPlan > 0
+        ? `requiere ${fmtInt(Math.abs(plan.ahorro_agua_m3))} m³ adicionales para sostener cobertura continua con fijación de nitrógeno`
+        : `requiere ${fmtInt(Math.abs(plan.ahorro_agua_m3))} m³ adicionales para sostener producción comercial con cobertura todo el año`;
+    const coverClause =
+      mesesProt >= 36
+        ? `protege el suelo los 36 meses (mitigando ${modisMo * 3} meses acumulados de alerta por suelo desnudo/estrés en MODIS NDVI)`
+        : `mantiene cubierto el suelo ${mesesProt}/36 meses`;
     const incDiff = plan.ingreso_neto_total_mxn - basePlan.ingreso_neto_total_mxn;
     const nSav = Number(plan.ahorro_fertilizante_n_total_mxn || 0);
     const fertClause =
@@ -1046,11 +1086,28 @@
         : ctx.fertilizerType === "mixto" && nSav > 0
         ? ` Incluye ahorro estimado en fertilizante nitrogenado ($${fmtInt(nSav)} MXN) al incorporar leguminosas.`
         : "";
-    const actPhrase = isOrch
-      ? `mantener activa la huerta de ${cInfo.cultivo_label} los 3 años e intercalar ${used.join(", ")} en los callejones`
-      : `sembrar ${cInfo.cultivo_label} en el Año 1 y rotar con ${used.join(", ")}`;
 
-    return `Con base en 10 años de registros satelitales NASA POWER y MODIS NDVI en ${soil.zona_label}, ${rainClause}, mientras el manejo sin cobertura de ${cInfo.cultivo_label} entra en ${LIGHT_PHRASE[basePlan.semaforo_sequia]} de sequía y ${LIGHT_PHRASE[basePlan.semaforo_plagas]} de plagas, ${actPhrase} en ${fmtNum1(ctx.hectares)} ha ${waterClause}, protege el suelo los 36 meses (mitigando ${modisMo * 3} meses acumulados de alerta por suelo desnudo/estrés en MODIS NDVI) y genera $${fmtInt(plan.ingreso_neto_total_mxn)} MXN netos (${incDiff >= 0 ? "+" : ""}$${fmtInt(incDiff)} MXN vs. manejo base de ${cInfo.cultivo_label}).${fertClause}`;
+    let actPhrase, baseDesc;
+    if (isOrch) {
+      actPhrase = `mantener activa la huerta de ${cInfo.cultivo_label} los 3 años e intercalar ${used.join(", ")} en los callejones`;
+      baseDesc = `la huerta de ${cInfo.cultivo_label} con callejones desnudos`;
+    } else if (currentCiclo === "Otono-Invierno") {
+      actPhrase = `conservar ${cInfo.cultivo_label} en el primer invierno y rotar con ${used.join(", ")}`;
+      baseDesc = `el monocultivo invernal de ${cInfo.cultivo_label}`;
+    } else if (baseBare === 0) {
+      actPhrase = `iniciar con ${cInfo.cultivo_label} en el Año 1 y transicionar en Años 2 y 3 con ${used.join(", ")}`;
+      baseDesc = `el monocultivo continuo de ${cInfo.cultivo_label}`;
+    } else {
+      actPhrase = `sembrar ${cInfo.cultivo_label} en el Año 1 y rotar con ${used.join(", ")}`;
+      baseDesc = `el manejo sin cobertura de ${cInfo.cultivo_label}`;
+    }
+    const cautions = [];
+    if (plan.semaforo_sequia !== "VERDE") cautions.push(`Sequía en ${plan.semaforo_sequia}`);
+    if (plan.semaforo_heladas !== "VERDE") cautions.push(`Heladas en ${plan.semaforo_heladas}`);
+    if (plan.semaforo_plagas !== "VERDE") cautions.push(`Plagas en ${plan.semaforo_plagas}`);
+    const riskClause = cautions.length ? ` Vigilar ${cautions.join(", ")} en el plan.` : " Semáforos de sequía, heladas y plagas en VERDE.";
+
+    return `Con base en 10 años de registros satelitales NASA POWER y MODIS NDVI en ${soil.zona_label}, ${rainClause}, mientras ${baseDesc} presenta ${LIGHT_PHRASE[basePlan.semaforo_sequia]} en sequía y ${LIGHT_PHRASE[basePlan.semaforo_plagas]} en plagas, ${actPhrase} en ${fmtNum1(ctx.hectares)} ha ${waterClause}, ${coverClause} y genera $${fmtInt(plan.ingreso_neto_total_mxn)} MXN netos (${incDiff >= 0 ? "+" : ""}$${fmtInt(incDiff)} MXN vs. manejo base de ${cInfo.cultivo_label}).${fertClause}${riskClause}`;
   }
 
   function buildNotes(plan, ctx) {
@@ -1253,62 +1310,285 @@
     };
   }
 
-  function evalCandidateViability168(crop, ctx) {
+  function evalCropSurvivalAndViability168(crop, ev, ahorroM3, diffDinero, isSameBaseline, ctx) {
     const soil = ctx.soil;
+    const climate = ctx.climate;
     const elevM = Number(soil.local_elevation_m || 1700);
-    const isHighAlt = elevM >= 2000 || ctx.locationId === "Los_Lirios_Arteaga";
+    const elevInt = Math.round(elevM);
+    const muniShort = String(soil.municipio || soil.zona_label || "").replace(/_/g, " ").trim();
+    const irr = ctx.irrigationMode;
+    const tempInc = Number(ctx.tempIncreaseC || 0);
+
+    const tempMin = Number(crop.temp_min_c ?? 8);
+    const tempMax = Number(crop.temp_max_c ?? 35);
+    const umbralHel = Number(crop.umbral_helada_c ?? 1);
+    const frostTol = Number(crop.frost_tolerance_score ?? 2);
+    const droughtTol = Number(crop.drought_tolerance_score ?? 2);
+    const waterMm = Number(crop.consumo_agua_mm ?? 400);
+    const rootCm = Number(crop.profundidad_raiz_cm ?? 60);
+    const fam = crop.familia_cultivo || "";
+    const cidLower = String(crop.cultivo || "").toLowerCase();
+
     const munisText = stripAccents(crop.municipios_coahuila);
     const benefitText = stripAccents(crop.beneficio_principal);
     const modalText = stripAccents(crop.modalidad_hidrica_tipica);
+    const nombreNorm = stripAccents(crop.nombre_comun);
     const geoText = `${munisText} ${benefitText}`;
-    const { preferred } = siteLocationTokens(ctx.locationId, soil);
 
-    let adj = preferred.slice(0, 2).some((t) => munisText.includes(t)) ? 5.5 : 0;
+    const { preferred } = siteLocationTokens(ctx.locationId, soil);
+    const directMatch = preferred.slice(0, 2).some((t) => munisText.includes(t));
+    const regionalMatch = [...preferred.slice(2), "sureste de coahuila", "coahuila"].some((t) => munisText.includes(t));
+
+    let frostLight = ev.semaforo_heladas;
+    let droughtLight = ev.semaforo_sequia;
+    const pestLight = ev.semaforo_plagas;
+
+    let surv = 84;
+    let viabAdj = 0;
+    const thermalReasons = [];
+    const waterReasons = [];
+    const positiveReasons = [];
     const notes = [];
+
+    const elevTempOffset = (1760 - elevM) * 0.0065;
+    const effMinPv = Number(climate.min_temp_pv_c ?? 10) + elevTempOffset;
+    const effMaxPv = Number(climate.max_temp_pv_c ?? 32) + Math.max(0, elevTempOffset);
+
+    const isLowChillExplicit =
+      cidLower.includes("bajo_requerimiento") ||
+      cidLower.includes("bajo_frio") ||
+      benefitText.includes("bajo frio") ||
+      benefitText.includes("menor requerimiento de horas frio") ||
+      munisText.includes("general cepeda");
+    const needsHighChill = ["Manzana", "Durazno_Chabacano_y_Membrillo"].includes(fam) && !isLowChillExplicit && tempMax <= 30;
+
+    if (elevM >= 1700 && tempMin >= 14) {
+      frostLight = "ROJO";
+      const coldGap = Math.max(0, tempMin - effMinPv);
+      if (elevM >= 2000) {
+        surv -= 42 + Math.min(12, coldGap * 1.4) + Math.max(0, umbralHel - 1.5) * 2;
+        viabAdj -= 24;
+        const msg = `cultivo de clima cálido (mín. ${Math.round(tempMin)} °C) que sufre por heladas en altitud de ${fmtInt(elevInt)} msnm`;
+        thermalReasons.push(msg);
+        notes.push(msg);
+      } else {
+        surv -= 30 + Math.min(12, coldGap * 1.5) + Math.max(0, umbralHel - 1.5) * 1.8 - tempInc * 1.5;
+        viabAdj -= 18;
+        const msg = `cultivo de clima cálido (mín. ${Math.round(tempMin)} °C) muy sensible al frío nocturno y heladas tempranas en ${muniShort}`;
+        thermalReasons.push(msg);
+        notes.push(msg);
+      }
+    } else if (elevM >= 2000 && (geoText.includes("no apto sierra") || cidLower.includes("sorgo") || (umbralHel >= 2 && frostTol <= 1))) {
+      const hardNoSierra = geoText.includes("no apto sierra") || cidLower.includes("sorgo");
+      if (hardNoSierra) {
+        frostLight = "ROJO";
+        surv -= 34;
+        viabAdj -= 22;
+        const msg = `no adaptado a sierra fría (${fmtInt(elevInt)} msnm) por riesgo de heladas`;
+        thermalReasons.push(msg);
+        notes.push(msg);
+      } else {
+        if (frostLight === "VERDE") frostLight = "AMARILLO";
+        surv -= 16;
+        viabAdj -= 10;
+        const msg = `sensible a heladas tempranas en sierra (${fmtInt(elevInt)} msnm)`;
+        thermalReasons.push(msg);
+        notes.push(msg);
+      }
+    } else if (elevM < 1550 && needsHighChill) {
+      surv -= 39 + tempInc * 3.5 + Math.max(0, 29.5 - tempMax) * 2.5;
+      viabAdj -= 22;
+      const msg = `requiere muchas horas frío invernal y sufre estrés térmico en zona baja cálida (${fmtInt(elevInt)} msnm)`;
+      thermalReasons.push(msg);
+      notes.push(msg);
+    } else if (
+      elevM < 1550 &&
+      (geoText.includes("sierra de arteaga") || geoText.includes(">2,000 msnm") || geoText.includes(">2,100 msnm") || tempMax <= 27) &&
+      !["general cepeda", "parras", "laguna", "region centro", "region norte"].some((t) => munisText.includes(t))
+    ) {
+      const heatEx = Math.max(0, effMaxPv - tempMax);
+      surv -= 22 + Math.min(12, heatEx * 2);
+      viabAdj -= 16;
+      const msg = `variedad de sierra fresca que pierde vigor por calor diurno en ${fmtInt(elevInt)} msnm`;
+      thermalReasons.push(msg);
+      notes.push(msg);
+    } else if (effMaxPv > tempMax + 2) {
+      const heatEx = effMaxPv - tempMax - 2;
+      surv -= Math.min(14, heatEx * 2.4);
+      viabAdj -= Math.min(8, heatEx * 1.4);
+      thermalReasons.push(`susceptible a picos de calor arriba de ${Math.round(tempMax)} °C`);
+    } else if (elevM >= 1700 && frostTol >= 3) {
+      surv += 5;
+      viabAdj += 4.5;
+      positiveReasons.push("tolera bien el frío nocturno");
+    } else if (elevM < 1550 && tempMin >= 12 && tempMax >= 35) {
+      surv += 5;
+      viabAdj += 4.5;
+      positiveReasons.push("aprovecha bien las temperaturas cálidas de la zona");
+    }
+
+    const cicloNorm = crop.ciclo_norm || crop.ciclo_siembra || "";
+    if (elevM < 1700 && cicloNorm === "Primavera-Verano" && frostLight !== "ROJO") {
+      if (Number(climate.frost_days_pv || 0) < 1 && effMinPv >= Math.min(11.5, tempMin)) frostLight = "VERDE";
+    }
+    if (frostTol <= 1 && frostLight === "ROJO" && !thermalReasons.length) {
+      thermalReasons.push(`riesgo crítico de heladas en ${muniShort}`);
+    }
+
+    const rainAdj = Number(climate.rain_adj_annual_mm);
+    const wRet = Number(soil.water_retention_score || 2);
+    const moPct = Number(soil.materia_organica_pct || 1.5);
+    const soilBufMm = (wRet - 2) * 35 + (moPct - 1.5) * 14 + (ctx.tillageMode === "conservacion" ? 22 : 0);
+    const availSupplyMm = rainAdj + soilBufMm + (irr === "riego" ? 400 : 0);
+    const waterDeficitMm = Math.max(0, waterMm - availSupplyMm);
+
     const hasTemp = /temporal|residual|agostadero/.test(modalText);
     const hasAux = /auxilio|deficitario|acequia/.test(modalText);
-    const isProt = modalText.includes("invernadero") && !geoText.includes("campo") && !stripAccents(crop.nombre_comun).includes("cielo abierto");
+    const reqRiego = !hasTemp && !hasAux;
+    const isProt = modalText.includes("invernadero") && !geoText.includes("campo") && !nombreNorm.includes("cielo abierto");
 
-    if (ctx.irrigationMode === "temporal") {
-      if (hasTemp) {
-        if (modalText.includes(">500 mm") && ctx.climate.rain_adj_annual_mm < 420) {
-          adj -= 12;
-          notes.push("requiere temporal de sierra (>500 mm anuales)");
-        } else adj += 5;
-      } else if (hasAux) adj -= 1;
-      else {
-        adj -= 15;
-        notes.push("requiere riego tecnificado o invernadero (restricción en temporal)");
+    if (irr === "temporal") {
+      if ((waterMm > 500 && droughtTol <= 1) || (waterMm > 500 && reqRiego)) {
+        droughtLight = "ROJO";
+        surv -= Math.min(44, 32 + waterDeficitMm / 25);
+        viabAdj -= 18;
+        const msg = `exige ${Math.round(waterMm)} mm de agua y riego constante (en temporal solo hay ${Math.round(rainAdj)} mm)`;
+        waterReasons.push(msg);
+        notes.push(msg);
+      } else if (reqRiego) {
+        surv -= 22 + Math.min(14, waterDeficitMm / 18);
+        viabAdj -= 14;
+        if (waterDeficitMm > 60 && droughtTol <= 2) droughtLight = "ROJO";
+        else if (droughtLight === "VERDE") droughtLight = "AMARILLO";
+        const msg = `diseñado para riego tecnificado (${Math.round(waterMm)} mm), limitado en temporal`;
+        waterReasons.push(msg);
+        notes.push(msg);
+      } else if (waterDeficitMm > 65) {
+        const tolF = Math.max(0.3, 1.15 - droughtTol * 0.2);
+        surv -= Math.min(26, (waterDeficitMm / 16) * tolF);
+        viabAdj -= waterDeficitMm > 120 ? 8 : 3;
+        if (droughtTol <= 1 && waterDeficitMm > 140) droughtLight = "ROJO";
+        else if (droughtLight === "VERDE" && droughtTol <= 2 && waterDeficitMm > 110) droughtLight = "AMARILLO";
+        waterReasons.push(`demanda ${Math.round(waterMm)} mm frente a ${Math.round(rainAdj)} mm de lluvia simulada`);
+      } else {
+        viabAdj += hasTemp ? 5 : 0;
+        if (droughtTol >= 3) {
+          surv += 5;
+          positiveReasons.push("resiste bien la falta de lluvia en temporal");
+        } else if (hasTemp) {
+          positiveReasons.push("se adapta al régimen de temporal");
+        }
       }
-      if (isProt) adj -= 8;
+      if (isProt) {
+        surv -= 8;
+        viabAdj -= 6;
+      }
+    } else {
+      viabAdj += reqRiego ? 4.5 : 2;
+      if (waterDeficitMm > 110) {
+        surv -= Math.min(18, (waterDeficitMm - 80) / 18);
+        waterReasons.push(`demanda hídrica muy alta (${Math.round(waterMm)} mm) bajo el clima simulado`);
+      } else {
+        surv += 5;
+        if (waterDeficitMm <= 40 && droughtLight === "ROJO") droughtLight = wRet === 1 && waterMm >= 580 ? "AMARILLO" : "VERDE";
+        else if (waterDeficitMm === 0 && (wRet >= 2 || waterMm <= 520) && droughtLight === "AMARILLO") droughtLight = "VERDE";
+        if (droughtTol >= 3) positiveReasons.push("aprovecha eficientemente el riego de auxilio");
+      }
+      if (isProt) {
+        surv -= 5;
+        waterReasons.push("requiere invernadero o malla sombra");
+      }
     }
 
-    const tempMin = Number(crop.temp_min_c || 8);
-    if (isHighAlt) {
-      if (geoText.includes("no apto sierra") || crop.cultivo.toLowerCase().includes("sorgo")) {
-        adj -= 22;
-        notes.push("no recomendado en sierra alta (>=2,000 msnm) por frío nocturno");
-      } else if (tempMin >= 14 || Number(crop.umbral_helada_c) >= 2.5) {
-        adj -= 16;
-        notes.push("alto riesgo de helada en zonas >=2,000 msnm");
-      } else if (munisText.includes("partes bajas") && !munisText.includes("los lirios")) adj -= 6;
-      else if (Number(crop.frost_tolerance_score) >= 3) adj += 4.5;
-    } else if (elevM < 1700) {
-      if (
-        (geoText.includes("sierra de arteaga") || geoText.includes(">2,000 msnm") || geoText.includes(">2,100 msnm") || modalText.includes("temporal de sierra")) &&
-        !["saltillo", "parras", "general cepeda", "laguna"].some((t) => munisText.includes(t))
-      ) {
-        adj -= 16;
-        notes.push("requiere mayor altitud/horas frío que esta parcela");
-      }
-    } else if (modalText.includes("temporal de sierra (>500 mm)") && ctx.climate.rain_adj_annual_mm < 420) {
-      adj -= 8;
+    if (directMatch) {
+      surv += 8;
+      viabAdj += 5.5;
+      positiveReasons.push(`adaptada oficialmente a ${muniShort}`);
+    } else if (regionalMatch) {
+      surv += 3.5;
+      viabAdj += 2;
+    } else {
+      surv -= 7;
     }
 
-    if (Number(soil.needs_erosion_cover) === 1 && Number(crop.erosion_control_score) >= 3) adj += 3;
-    if (Number(soil.needs_nitrogen_fixation) === 1 && Number(crop.fija_nitrogeno_bin) === 1) adj += 3.5;
+    if (Number(soil.needs_nitrogen_fixation) === 1 && crop.fija_nitrogeno === "Si") {
+      surv += 3;
+      viabAdj += 3.5;
+    }
+    if (Number(soil.needs_erosion_cover) === 1 && Number(crop.erosion_control_score) >= 3) {
+      surv += 2.5;
+      viabAdj += 3;
+    }
+    if (ctx.tillageMode === "conservacion") surv += 2;
+    if (rootCm >= 100 && ctx.concerns.includes("sequia")) surv += 2;
 
-    return { adj, note: notes.join("; ") };
+    if (droughtLight === "ROJO" || frostLight === "ROJO") surv = Math.min(surv, 46);
+    else if (droughtLight === "AMARILLO" || frostLight === "AMARILLO" || pestLight === "ROJO") surv = Math.min(surv, 73);
+
+    const probPct = Math.max(5, Math.min(99, Math.round(surv)));
+    let estadoViabilidad;
+    if (probPct < 50 || droughtLight === "ROJO" || frostLight === "ROJO") {
+      estadoViabilidad = "❌ Alto Riesgo de Pérdida";
+    } else if (
+      probPct >= 75 &&
+      droughtLight !== "ROJO" &&
+      frostLight !== "ROJO" &&
+      pestLight !== "ROJO" &&
+      droughtLight !== "AMARILLO" &&
+      frostLight !== "AMARILLO"
+    ) {
+      estadoViabilidad = "✅ Muy Viable en tu Parcela";
+    } else {
+      estadoViabilidad = "⚠️ Viable con Manejo / Cuidados";
+    }
+
+    const prefix = estadoViabilidad.startsWith("✅")
+      ? `Alta supervivencia (${probPct}%) en ${muniShort}`
+      : estadoViabilidad.startsWith("❌")
+      ? `Alto riesgo (${probPct}%) en ${muniShort} (${fmtInt(elevInt)} msnm)`
+      : `Viable con manejo (${probPct}%) en ${muniShort} (${fmtInt(elevInt)} msnm)`;
+
+    const clauses = [];
+    if (estadoViabilidad.startsWith("❌")) {
+      if (thermalReasons.length) clauses.push(thermalReasons[0]);
+      if (waterReasons.length) clauses.push(waterReasons[0]);
+      if (!clauses.length) clauses.push(`baja adaptación climática/edáfica bajo ${irr}`);
+    } else if (estadoViabilidad.startsWith("⚠️")) {
+      if (thermalReasons.length) clauses.push(thermalReasons[0]);
+      else if (waterReasons.length) clauses.push(waterReasons[0]);
+      if (pestLight === "ROJO" && !clauses.length) {
+        clauses.push(isSameBaseline ? "el monocultivo seguido eleva plagas hacia el Año 3" : "requiere rotación o cobertura invernal para contener plagas");
+      }
+      if (!clauses.length && positiveReasons.length) clauses.push(positiveReasons[0]);
+    } else {
+      clauses.push(positiveReasons.length ? positiveReasons.slice(0, 2).join(", ") : `buena compatibilidad térmica e hídrica en ${irr}`);
+    }
+
+    if (ahorroM3 >= 300) clauses.push(`ahorra ${fmtInt(ahorroM3)} m³ de agua en 3 años`);
+    else if (ahorroM3 <= -300) clauses.push(`gasta ${fmtInt(Math.abs(ahorroM3))} m³ extra de agua en 3 años`);
+    else clauses.push("gasto de agua similar a tu cultivo actual");
+
+    if (crop.fija_nitrogeno === "Si") clauses.push("fija nitrógeno natural");
+    else if (crop.modo_en_kultiva === "Cobertura_Intercalada_Perenne") clauses.push("mantiene cobertura perenne todo el año");
+    else if (diffDinero >= 15000) clauses.push(`deja +$${fmtInt(diffDinero)} MXN extra vs. tu cultivo actual`);
+    else if (diffDinero <= -15000) clauses.push(`deja $${fmtInt(Math.abs(diffDinero))} MXN menos que tu cultivo actual`);
+
+    const diagnostico =
+      clauses.length === 1
+        ? `${prefix}: ${clauses[0]}.`
+        : clauses.length === 2
+        ? `${prefix}: ${clauses[0]} y ${clauses[1]}.`
+        : `${prefix}: ${clauses.slice(0, -1).join(", ")} y ${clauses[clauses.length - 1]}.`;
+
+    return {
+      probabilidad_supervivencia_pct: probPct,
+      estado_viabilidad: estadoViabilidad,
+      drought_light: droughtLight,
+      frost_light: frostLight,
+      pest_light: pestLight,
+      viab_adj: viabAdj,
+      diagnostico_agricultor: diagnostico,
+    };
   }
 
   function simulateAll168Crops(req) {
@@ -1325,59 +1605,71 @@
       const vid = v.cultivo;
       const isSame = vid === ctx.resolvedCropId;
       const cicloNorm = v.ciclo_norm || v.ciclo_siembra;
+      const modo = v.modo_en_kultiva || "Rotacion_Ciclica";
       let yearsSpec;
-      if (v.modo_en_kultiva === "Cobertura_Intercalada_Perenne") {
+      if (modo === "Cobertura_Intercalada_Perenne") {
         yearsSpec = [1, 2, 3].map((year) => ({ year, pv: vid, oi: siteCover, intercropped: true }));
       } else if (cicloNorm === "Todo_el_ano") {
-        yearsSpec = [1, 2, 3].map((year, idx) => ({ year, pv: vid, oi: vid, consec_override: isSame ? idx : idx === 2 ? 1 : 0 }));
+        yearsSpec = [1, 2, 3].map((year, idx) => ({ year, pv: vid, oi: vid, consec_override: isSame ? idx : 0 }));
       } else if (cicloNorm === "Otono-Invierno") {
-        yearsSpec = [1, 2, 3].map((year, idx) => ({ year, pv: "Barbecho_Suelo_Desnudo", oi: vid, consec_override: isSame ? idx : idx === 2 ? 1 : 0 }));
+        yearsSpec = [1, 2, 3].map((year, idx) => ({ year, pv: "Barbecho_Suelo_Desnudo", oi: vid, consec_override: isSame ? idx : 0 }));
       } else {
-        yearsSpec = [1, 2, 3].map((year, idx) => ({ year, pv: vid, oi: "Barbecho_Suelo_Desnudo", consec_override: isSame ? idx : idx === 2 ? 1 : 0 }));
+        yearsSpec = [1, 2, 3].map((year, idx) => ({ year, pv: vid, oi: "Barbecho_Suelo_Desnudo", consec_override: isSame ? idx : 0 }));
       }
-      const ev = evalTemplate({ plan_id: isSame ? "plan_actual" : `eval_${vid}`, plan_name: v.nombre_comun, strategy_focus: v.beneficio_principal, years: yearsSpec }, ctx, isSame);
-      const { adj, note } = evalCandidateViability168(v, ctx);
-      return { v, ev, adj, note };
+      const ev = evalTemplate(
+        { plan_id: isSame ? "plan_actual" : `eval_${vid}`, plan_name: v.nombre_comun, strategy_focus: v.beneficio_principal, years: yearsSpec },
+        ctx,
+        isSame && modo !== "Cobertura_Intercalada_Perenne"
+      );
+      return { v, ev, isSame };
     });
 
     const max168Net = Math.max(...prelim.map((x) => x.ev.ingreso_neto_ha_3a_mxn));
-    const results = prelim.map(({ v, ev, adj, note }) => {
-      scorePlan(ev, baseline, ctx, 92000, adj);
-      const netHa = ev.ingreso_neto_ha_3a_mxn;
-      const pfPen =
-        (ev.semaforo_plagas === "ROJO" ? 8 : ev.semaforo_plagas === "AMARILLO" ? 3 : 0) +
-        (ev.semaforo_heladas === "ROJO" ? 8 : ev.semaforo_heladas === "AMARILLO" ? 3 : 0);
-      const softProf = 0.5 * Math.min(100, (netHa / 92000) * 100) + 0.5 * ((netHa / Math.max(92000, max168Net)) * 100);
-      const profSc = roundTo(Math.max(5, Math.min(100, softProf - pfPen)), 1);
-      const wSc = ev.component_scores.water_score;
-      const nSc = ev.component_scores.nitrogen_soil_score;
-      const suit = roundTo(Math.max(5, Math.min(100, ctx.wWater * wSc + ctx.wProfit * profSc + ctx.wNitrogen * nSc + adj)), 2);
-
-      let frostLight = ev.semaforo_heladas;
-      if ((elevM >= 2000 || ctx.locationId === "Los_Lirios_Arteaga") && Number(v.temp_min_c) >= 14) frostLight = "ROJO";
-      let droughtLight = ev.semaforo_sequia;
-      if (ctx.irrigationMode === "temporal" && note.includes("requiere riego") && Number(v.consumo_agua_mm) >= 500) droughtLight = "ROJO";
-
-      const aguaM3 = ev.consumo_agua_total_3a_m3;
+    const results = prelim.map(({ v, ev, isSame }) => {
+      const aguaM3 = roundTo(ev.demanda_agua_efectiva_3a_mm * 10 * ctx.hectares, 1);
       const ahorroM3 = roundTo(baseWaterM3 - aguaM3, 1);
       const ahorroL = Math.round(ahorroM3 * 1000);
       const util3a = ev.ingreso_neto_total_mxn;
       const diffDin = roundTo(util3a - baseNetMxn, 2);
-      const mProt = ev.balance_nitrogeno_y_cobertura.meses_suelo_protegido_3a;
 
-      const aguaTxt = ahorroM3 >= 0 ? `ahorra ${fmtInt(ahorroM3)} m³ de agua` : `requiere ${fmtInt(Math.abs(ahorroM3))} m³ adicionales`;
-      const dinTxt = diffDin >= 0 ? `+$${fmtInt(diffDin)} MXN vs. tu cultivo actual` : `-$${fmtInt(Math.abs(diffDin))} MXN vs. tu cultivo actual`;
-      const nTxt = v.fija_nitrogeno === "Si" ? " · fija nitrógeno en el suelo" : "";
-      const cTxt = note ? ` · Nota: ${note}` : "";
+      const viab = evalCropSurvivalAndViability168(v, ev, ahorroM3, diffDin, isSame, ctx);
+      const adj = viab.viab_adj;
+      const droughtLight = viab.drought_light;
+      const frostLight = viab.frost_light;
+      const pestLight = viab.pest_light;
+      const probPct = viab.probabilidad_supervivencia_pct;
+      const estadoViab = viab.estado_viabilidad;
+
+      scorePlan(ev, baseline, ctx, 92000, adj);
+      const netHa = ev.ingreso_neto_ha_3a_mxn;
+      const pfPen =
+        (pestLight === "ROJO" ? 8 : pestLight === "AMARILLO" ? 3 : 0) +
+        (frostLight === "ROJO" ? 8 : frostLight === "AMARILLO" ? 3 : 0);
+      const softProf = 0.5 * Math.min(100, (netHa / 92000) * 100) + 0.5 * ((netHa / Math.max(92000, max168Net)) * 100);
+      const profSc = roundTo(Math.max(5, Math.min(100, softProf - pfPen)), 1);
+      const wSc = ev.component_scores.water_score;
+      const nSc = ev.component_scores.nitrogen_soil_score;
+      let rawSuit = ctx.wWater * wSc + ctx.wProfit * profSc + ctx.wNitrogen * nSc + adj;
+      if (estadoViab.startsWith("❌")) rawSuit = Math.min(rawSuit, 49 + probPct * 0.15);
+      const suit = roundTo(Math.max(5, Math.min(100, rawSuit)), 2);
+
+      const mProt = ev.balance_nitrogeno_y_cobertura.meses_suelo_protegido_3a;
+      const famLabel = (DATA.family_labels && DATA.family_labels[v.familia_cultivo]) || String(v.familia_cultivo).replace(/_/g, " ");
+      const catLabel = (DATA.siap_category_labels && DATA.siap_category_labels[v.categoria_siap]) || String(v.categoria_siap).replace(/_/g, " ");
 
       return {
         ranking: 0,
         cultivo: v.cultivo,
         nombre_comun: v.nombre_comun,
         familia_cultivo: v.familia_cultivo,
+        familia_label: famLabel,
         categoria_siap: v.categoria_siap,
+        categoria_label: catLabel,
         modo_en_kultiva: v.modo_en_kultiva,
         clasificacion_oficial: v.clasificacion_oficial,
+        probabilidad_supervivencia_pct: probPct,
+        estado_viabilidad: estadoViab,
+        fija_nitrogeno: v.fija_nitrogeno === "Si" ? "Sí" : "No",
         suitability_score: suit,
         water_score: wSc,
         profit_score: profSc,
@@ -1392,16 +1684,18 @@
         meses_suelo_protegido_36: mProt,
         semaforo_sequia: droughtLight,
         semaforo_heladas: frostLight,
-        semaforo_plagas: ev.semaforo_plagas,
+        semaforo_plagas: pestLight,
         municipios_coahuila: v.municipios_coahuila,
         fuente_oficial: v.fuente_oficial,
-        resumen_escenario: `En ${ctx.soil.zona_label} (${fmtNum1(ctx.hectares)} ha, ${ctx.irrigationMode}), ${aguaTxt}, proyecta $${fmtInt(util3a)} MXN (${dinTxt}), cubre el suelo ${mProt}/36 meses${nTxt} con riesgo Sequía=${droughtLight}/Heladas=${frostLight}/Plagas=${ev.semaforo_plagas}${cTxt}.`,
+        diagnostico_agricultor: viab.diagnostico_agricultor,
+        resumen_escenario: viab.diagnostico_agricultor,
       };
     });
 
     results.sort(
       (a, b) =>
         b.suitability_score - a.suitability_score ||
+        b.probabilidad_supervivencia_pct - a.probabilidad_supervivencia_pct ||
         b.ahorro_agua_vs_actual_m3 - a.ahorro_agua_vs_actual_m3 ||
         b.diferencia_dinero_vs_actual_mxn - a.diferencia_dinero_vs_actual_mxn ||
         a.cultivo.localeCompare(b.cultivo)
@@ -1420,61 +1714,51 @@
   function generate168Csv(req) {
     const rows = simulateAll168Crops(req);
     const headers = [
-      "Ranking",
-      "ID Cultivo",
-      "Nombre Comun Oficial",
-      "Familia SIAP",
-      "Categoria SIAP",
-      "Modo en Kultiva",
-      "Clasificacion Oficial",
-      "Afinidad (%)",
-      "Puntaje Agua",
-      "Puntaje Rentabilidad",
-      "Puntaje Suelo y N",
-      "Consumo Agua Base (mm)",
-      "Agua Consumida 3A (m3)",
-      "Ahorro Agua vs Actual (m3)",
-      "Ahorro Agua vs Actual (L)",
-      "Utilidad Neta 3A (MXN)",
-      "Diferencia Dinero vs Actual (MXN)",
-      "Ahorro Fertilizante 3A (MXN)",
-      "Meses Suelo Protegido (/36)",
-      "Semaforo Sequia",
-      "Semaforo Heladas",
-      "Semaforo Plagas",
-      "Municipios Coahuila",
-      "Fuente Oficial",
-      "Resumen de Escenario",
+      "Posición (#)",
+      "Viabilidad en tu Parcela",
+      "Prob. de Supervivencia / Éxito (%)",
+      "Cultivo y Variedad Oficial",
+      "Categoría / Grupo",
+      "Agua que Ahorras en 3 Años (m³)",
+      "Agua que Ahorras (Litros)",
+      "Agua Total que Necesita en 3 Años (m³)",
+      "Ganancia Neta Estimada en 3 Años (MXN)",
+      "Dinero Extra vs. tu Cultivo Actual (MXN)",
+      "Ahorro en Fertilizante (MXN)",
+      "¿Fija Nitrógeno?",
+      "Meses con Suelo Protegido (de 36)",
+      "Riesgo Sequía",
+      "Riesgo Heladas",
+      "Riesgo Plagas",
+      "¿Qué pasaría si lo siembras en tu parcela?",
+      "Zonas Recomendadas en Coahuila",
+      "Respaldo Científico Oficial",
+      "ID Técnico (Referencia)",
     ];
     const lines = [headers.map(csvCell).join(",")];
     for (const r of rows) {
       lines.push(
         [
           r.ranking,
-          r.cultivo,
+          r.estado_viabilidad,
+          `${r.probabilidad_supervivencia_pct}%`,
           r.nombre_comun,
-          r.familia_cultivo,
-          r.categoria_siap,
-          r.modo_en_kultiva,
-          r.clasificacion_oficial,
-          r.suitability_score,
-          r.water_score,
-          r.profit_score,
-          r.nitrogen_soil_score,
-          r.consumo_agua_base_mm,
-          r.agua_consumida_3a_m3,
+          `${r.categoria_label} · ${r.familia_label}`,
           r.ahorro_agua_vs_actual_m3,
           r.ahorro_agua_vs_actual_litros,
+          r.agua_consumida_3a_m3,
           r.utilidad_neta_3a_mxn,
           r.diferencia_dinero_vs_actual_mxn,
           r.ahorro_fertilizante_3a_mxn,
+          r.fija_nitrogeno,
           r.meses_suelo_protegido_36,
           r.semaforo_sequia,
           r.semaforo_heladas,
           r.semaforo_plagas,
+          r.diagnostico_agricultor,
           r.municipios_coahuila,
           r.fuente_oficial,
-          r.resumen_escenario,
+          r.cultivo,
         ]
           .map(csvCell)
           .join(",")
