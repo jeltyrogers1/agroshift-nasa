@@ -10,7 +10,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from src.agroshift_engine import simulate_scenarios
+from src.agroshift_engine import get_official_catalog_payload, simulate_scenarios
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -31,7 +31,8 @@ class SimulateRequest(BaseModel):
     temp_increase_c: float = Field(default=0.0, ge=0.0, le=3.0)
     irrigation_mode: str = Field(default="temporal")
     market_goal: str = Field(default="grano")
-    current_crop: str = Field(default="Maiz_Grano")
+    current_crop: str | None = Field(default=None)
+    familia_cultivo: str | None = Field(default=None)
     custom_crop_name: str | None = Field(default=None)
     custom_crop_water_tier: str = Field(default="medio")
     soil_override: dict[str, Any] | None = Field(default=None)
@@ -74,9 +75,12 @@ def load_monthly_history_by_location() -> dict[str, list[dict[str, Any]]]:
 
 @app.get("/api/init")
 def api_init() -> dict[str, Any]:
+    catalog = get_official_catalog_payload()
     return {
         "suelos": _read_json("suelos_coahuila_clean.json"),
-        "cultivos": _read_json("cultivos_coahuila_clean.json"),
+        "cultivos": catalog["cultivos"],
+        "familias_cultivo": catalog["familias_cultivo"],
+        "catalogo_agrupado": catalog["catalogo_agrupado"],
         "climatology": _read_json("agroshift_climatology_12m.json"),
         "history_by_location": load_monthly_history_by_location(),
     }
@@ -103,6 +107,7 @@ def api_history(location_id: str) -> dict[str, Any]:
 @app.post("/api/simulate")
 def api_simulate(req: SimulateRequest) -> dict[str, Any]:
     try:
+        effective_crop = req.current_crop or req.familia_cultivo or "Maiz_Grano"
         return simulate_scenarios(
             location_id=req.location_id,
             hectares=req.hectares,
@@ -113,7 +118,7 @@ def api_simulate(req: SimulateRequest) -> dict[str, Any]:
             temp_increase_c=req.temp_increase_c,
             irrigation_mode=req.irrigation_mode,
             market_goal=req.market_goal,
-            current_crop=req.current_crop,
+            current_crop=effective_crop,
             custom_crop_name=req.custom_crop_name,
             custom_crop_water_tier=req.custom_crop_water_tier,
             soil_override=req.soil_override,

@@ -1,9 +1,9 @@
-const CACHE_NAME = "kultiva-minimal-v2";
+const CACHE_NAME = "kultiva-minimal-v3";
 const PRECACHE_URLS = [
   "/",
   "/static/index.html",
   "/static/styles.css?v=minimal2",
-  "/static/app.js?v=minimal2",
+  "/static/app.js?v=minimal3",
   "/static/manifest.json",
   "/static/logo-Kultiva.png?v=3"
 ];

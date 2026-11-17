@@ -33,6 +33,9 @@
     currentStep: 1,
     suelos: {},
     cultivos: [],
+    familias: [],
+    catalogoAgrupado: [],
+    cropCategoryFilter: "all",
     climatology: {},
     historyByLocation: {},
     locationId: "UAAAN_La_Narro",
@@ -46,7 +49,7 @@
     tempIncreaseC: 0.0,
     irrigationMode: "temporal",
     marketGoal: "grano",
-    currentCrop: "Maiz_Grano",
+    currentCrop: "Maiz",
     customCropName: "",
     customCropWaterTier: "medio",
     fertilizerType: "quimico",
@@ -180,18 +183,144 @@
     icons();
   }
 
+  function escapeHtml(str) {
+    return String(str ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  function buildCatalogGroupsFallback() {
+    const byCat = new Map();
+    for (const c of state.cultivos || []) {
+      const catId = c.categoria_siap || "Otros";
+      const famId = c.familia_cultivo || c.cultivo;
+      if (!byCat.has(catId)) {
+        byCat.set(catId, {
+          categoria_siap: catId,
+          categoria_label: catId.replace(/_/g, " "),
+          familiasMap: new Map(),
+        });
+      }
+      const catEntry = byCat.get(catId);
+      if (!catEntry.familiasMap.has(famId)) {
+        catEntry.familiasMap.set(famId, {
+          familia_cultivo: famId,
+          familia_label: famId.replace(/_/g, " "),
+          variedades: [],
+        });
+      }
+      catEntry.familiasMap.get(famId).variedades.push(c);
+    }
+    return Array.from(byCat.values()).map((cat) => ({
+      categoria_siap: cat.categoria_siap,
+      categoria_label: cat.categoria_label,
+      familias: Array.from(cat.familiasMap.values()).map((fam) => ({
+        ...fam,
+        variedades_count: fam.variedades.length,
+      })),
+    }));
+  }
+
   function renderCropSelector() {
     const sel = $("select-crop");
-    if (!sel || !Array.isArray(state.cultivos) || !state.cultivos.length) return;
-    sel.innerHTML =
-      state.cultivos
-        .map(
-          (c) => `<option value="${c.cultivo}">${c.cultivo_label} (${c.ciclo_label || c.ciclo_siembra})</option>`
-        )
-        .join("") + `<option value="__otro__">Otro (Escribir manualmente)...</option>`;
-    sel.value = state.currentCrop;
+    if (!sel) return;
+
+    const groups =
+      Array.isArray(state.catalogoAgrupado) && state.catalogoAgrupado.length
+        ? state.catalogoAgrupado
+        : buildCatalogGroupsFallback();
+    if (!groups.length) return;
+
+    const catFilter = state.cropCategoryFilter || "all";
+    const visibleCategories = catFilter === "all" ? groups : groups.filter((g) => g.categoria_siap === catFilter);
+
+    const optgroupsHtml = visibleCategories
+      .map((cat) =>
+        (cat.familias || [])
+          .map((fam) => {
+            const count = fam.variedades_count || (fam.variedades || []).length;
+            const autoOpt = `<option value="${escapeHtml(fam.familia_cultivo)}">★ ${escapeHtml(
+              fam.familia_label
+            )} (Auto-selección por zona)</option>`;
+            const varietyOpts = (fam.variedades || [])
+              .map(
+                (v) =>
+                  `<option value="${escapeHtml(v.cultivo)}">${escapeHtml(v.cultivo_label)} · ${Math.round(
+                    Number(v.consumo_agua_mm || 0)
+                  )} mm</option>`
+              )
+              .join("");
+            return `<optgroup label="${escapeHtml(cat.categoria_label)} · ${escapeHtml(
+              fam.familia_label
+            )} (${count})">${autoOpt}${varietyOpts}</optgroup>`;
+          })
+          .join("")
+      )
+      .join("");
+
+    sel.innerHTML = optgroupsHtml + `<option value="__otro__">Otro cultivo... (Escribir manualmente)</option>`;
+
+    // Mantener selección actual si existe en las opciones visibles; si no, elegir la primera familia visible
+    const hasCurrent = Array.from(sel.options).some((opt) => opt.value === state.currentCrop);
+    if (hasCurrent) {
+      sel.value = state.currentCrop;
+    } else if (sel.options.length > 0) {
+      sel.value = sel.options[0].value;
+      state.currentCrop = sel.value;
+    }
+
     const customBox = $("custom-crop-box");
     if (customBox) customBox.classList.toggle("hidden", state.currentCrop !== "__otro__");
+    updateResolvedCropHint(state.lastSimResult);
+  }
+
+  function updateResolvedCropHint(data) {
+    const hint = $("crop-resolved-hint");
+    if (!hint) return;
+    if (state.currentCrop === "__otro__" || !data || !data.nombre_comun) {
+      hint.classList.add("hidden");
+      hint.textContent = "";
+      return;
+    }
+    const modeTag =
+      data.selection_mode === "variedad_oficial"
+        ? "Variedad oficial"
+        : `Auto-selección (${data.zona_label || data.municipio})`;
+    const waterTxt = data.consumo_agua_mm ? ` · ${Math.round(Number(data.consumo_agua_mm))} mm` : "";
+    const madurezTxt = data.dias_madurez ? ` · ${data.dias_madurez}` : "";
+    hint.textContent = `${modeTag}: ${data.nombre_comun}${waterTxt}${madurezTxt}`;
+    hint.classList.remove("hidden");
+  }
+
+  function renderOfficialVarietyMetaBlock(data) {
+    if (!data || !data.nombre_comun) return "";
+    const catLabel = String(data.categoria_siap || "").replace(/_/g, " ");
+    const famLabel = String(data.familia_cultivo || "").replace(/_/g, " ");
+    const clasif = String(data.clasificacion_oficial || "").replace(/_/g, " ");
+    const waterMm = data.consumo_agua_mm ? `${Math.round(Number(data.consumo_agua_mm))} mm` : "N/D";
+    const diasMad = data.dias_madurez || "N/D";
+    const fuente = data.fuente_oficial || "Catálogo oficial Kultiva Coahuila";
+
+    return `
+      <div class="p-3 rounded-xl border border-white/10 bg-white/[0.03] text-xs space-y-1.5">
+        <div class="text-[10px] font-bold uppercase tracking-wider text-[#a3e635]">Variedad oficial resuelta</div>
+        <div class="font-semibold text-white leading-snug">${escapeHtml(data.nombre_comun)}</div>
+        <div class="text-[11px] text-slate-300 leading-snug">
+          <span>${escapeHtml(catLabel)} · ${escapeHtml(famLabel)}</span>
+          ${clasif ? ` · <span class="opacity-80">${escapeHtml(clasif)}</span>` : ""}
+        </div>
+        <div class="text-[11px] text-slate-300 leading-snug">
+          Lámina oficial: <strong class="text-white">${escapeHtml(waterMm)}</strong> · Madurez: <strong class="text-white">${escapeHtml(
+      diasMad
+    )}</strong>
+        </div>
+        <div class="text-[11px] text-slate-400 leading-snug">
+          <strong class="text-slate-300">Fuente oficial:</strong> ${escapeHtml(fuente)}
+        </div>
+      </div>
+    `;
   }
 
   function inferCustomCropWaterTier(rawName) {
@@ -939,6 +1068,26 @@
       if (!(Number(e.target.value) > 0)) e.target.value = state.hectares;
     });
 
+    // Filtro rápido por categoría SIAP (5 categorías)
+    const catFilterBox = $("crop-category-filter");
+    if (catFilterBox) {
+      catFilterBox.querySelectorAll("button[data-cat]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          state.cropCategoryFilter = btn.dataset.cat || "all";
+          catFilterBox.querySelectorAll("button[data-cat]").forEach((b) => {
+            const active = b === btn;
+            b.classList.toggle("active", active);
+            b.setAttribute("aria-pressed", active ? "true" : "false");
+          });
+          const prevCrop = state.currentCrop;
+          renderCropSelector();
+          if (state.currentCrop !== prevCrop) {
+            scheduleSimulate(20);
+          }
+        });
+      });
+    }
+
     // Cultivo actual / que necesita sembrar
     $("select-crop").addEventListener("change", (e) => {
       state.currentCrop = e.target.value;
@@ -946,6 +1095,7 @@
       const customBox = $("custom-crop-box");
       if (customBox) customBox.classList.toggle("hidden", !isCustom);
       if (isCustom) {
+        updateResolvedCropHint(null);
         const inp = $("input-custom-crop");
         if (inp) inp.focus();
       }
@@ -1079,6 +1229,7 @@
       const data = await res.json();
       if (seq !== reqSeq) return;
       state.lastSimResult = data;
+      updateResolvedCropHint(data);
       if (data.parcel_context && data.parcel_context.problema_principal && $("soil-problem")) {
         const prefix = data.is_custom_soil ? "Diagnóstico en campo (personalizado): " : "Diagnóstico local: ";
         $("soil-problem").textContent = `${prefix}${data.parcel_context.problema_principal}`;
@@ -1296,6 +1447,7 @@
                 </div>
               </div>
               <p class="nasa-note">${formatEvidenceText(basePlan.nasa_evidence_summary)}</p>
+              ${renderOfficialVarietyMetaBlock(data)}
             </div>
           </details>
           <details class="validation">
@@ -1404,6 +1556,7 @@
                   </div>
                 </div>
                 <p class="nasa-note">${formatEvidenceText(p.nasa_evidence_summary)}</p>
+                ${renderOfficialVarietyMetaBlock(data)}
               </div>
             </details>
             <details class="validation">
@@ -1498,8 +1651,9 @@
       <div class="ps-h">1. Perfil de Parcela y Escenario Simulado</div>
       <div class="ps-grid">
         <div><b>Superficie Analizada:</b> ${NUM.format(state.hectares)} ha</div>
-        <div><b>Cultivo Actual / Base (Año 1):</b> ${data.current_crop_label || state.currentCrop} (${data.current_crop_cycle_label || ""
+        <div><b>Cultivo Actual / Base (Año 1):</b> ${escapeHtml(data.nombre_comun || data.current_crop_label || state.currentCrop)} (${escapeHtml(data.current_crop_cycle_label || "")
       })</div>
+        <div><b>Fuente Oficial Variedad:</b> ${escapeHtml(data.fuente_oficial || "Catálogo oficial Kultiva Coahuila")}</div>
         <div><b>Tipo de Suelo y Textura:</b> ${ctx.tipo_suelo_label} (${ctx.textura_label}) · MO ${ctx.materia_organica_pct
       }% · Elevación ${NUM.format(ctx.local_elevation_m)} msnm · Pendiente ${ctx.pendiente_pct ?? state.suelos[state.locationId]?.pendiente_pct ?? 2.0
       }% ${data.is_custom_soil || ctx.is_custom_soil
@@ -1867,7 +2021,9 @@
     const res = await fetch("/api/init");
     const d = await res.json();
     state.suelos = Object.fromEntries(d.suelos.map((s) => [s.location_id, s]));
-    state.cultivos = d.cultivos;
+    state.cultivos = d.cultivos || [];
+    state.familias = d.familias_cultivo || [];
+    state.catalogoAgrupado = d.catalogo_agrupado || [];
     state.climatology = d.climatology.locations || d.climatology;
     state.historyByLocation = d.history_by_location || {};
     state.hectares = DEFAULT_HA;

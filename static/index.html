@@ -254,11 +254,20 @@
         </div>
 
         <!-- Selector grande de cultivo actual -->
-        <div class="card space-y-2">
+        <div class="card space-y-2.5">
           <label for="select-crop" class="field-label">Cultivo actual</label>
+          <div id="crop-category-filter" class="flex flex-wrap gap-1.5" role="group" aria-label="Filtrar por categoría SIAP">
+            <button type="button" data-cat="all" class="seg-tab active text-[11px] px-2.5 py-1 border border-white/15" style="min-height:30px">Todas (168)</button>
+            <button type="button" data-cat="Granos_y_Leguminosas" class="seg-tab text-[11px] px-2.5 py-1 border border-white/10" style="min-height:30px">Granos</button>
+            <button type="button" data-cat="Forrajes" class="seg-tab text-[11px] px-2.5 py-1 border border-white/10" style="min-height:30px">Forrajes</button>
+            <button type="button" data-cat="Hortalizas" class="seg-tab text-[11px] px-2.5 py-1 border border-white/10" style="min-height:30px">Hortalizas</button>
+            <button type="button" data-cat="Industriales_y_Oleaginosas" class="seg-tab text-[11px] px-2.5 py-1 border border-white/10" style="min-height:30px">Industriales</button>
+            <button type="button" data-cat="Frutales_Perennes" class="seg-tab text-[11px] px-2.5 py-1 border border-white/10" style="min-height:30px">Frutales</button>
+          </div>
           <select id="select-crop" class="num-input text-base">
-            <option value="Maiz_Grano">Maíz Grano (Primavera-Verano)</option>
+            <option value="Maiz">Maíz — Auto-selección por zona</option>
           </select>
+          <p id="crop-resolved-hint" class="hidden text-[11px] leading-snug text-slate-400 pt-0.5"></p>
           <div id="custom-crop-box" class="hidden space-y-2.5 pt-2 border-t border-slate-200/80">
             <div>
               <label for="input-custom-crop" class="block text-[11px] font-bold uppercase tracking-wider text-slate-600 mb-1">Nombre del cultivo</label>
@@ -647,6 +656,6 @@
   <script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@turf/turf@6/turf.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-  <script src="/static/app.js?v=minimal2"></script>
+  <script src="/static/app.js?v=minimal3"></script>
 </body>
 </html>
