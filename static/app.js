@@ -1167,11 +1167,100 @@
       }
     });
 
-    // Exportar Plan para Campo (Impresión limpia)
+    // Exportar Plan para Campo (Impresión limpia Top 5)
     $("btn-export").addEventListener("click", () => {
       renderPrintSheet();
       window.print();
     });
+
+    // Descargar Excel completo con evaluación de los 168 cultivos oficiales
+    $("btn-export-excel").addEventListener("click", exportExcel168);
+  }
+
+  function buildSimPayload() {
+    return {
+      location_id: state.locationId,
+      hectares: state.hectares,
+      weight_water: state.wWater / 100,
+      weight_profit: state.wProfit / 100,
+      weight_nitrogen: state.wNitrogen / 100,
+      rain_reduction_pct: state.rainPct / 100,
+      temp_increase_c: state.tempIncreaseC,
+      irrigation_mode: state.irrigationMode,
+      market_goal: state.marketGoal,
+      current_crop: state.currentCrop,
+      custom_crop_name: state.currentCrop === "__otro__" ? state.customCropName.trim() : null,
+      custom_crop_water_tier: state.customCropWaterTier,
+      soil_override: state.soilOverride,
+      fertilizer_type: state.fertilizerType,
+      tillage_mode: state.tillageMode,
+      main_concern: state.mainConcerns,
+      selected_problems: state.mainConcerns,
+    };
+  }
+
+  function triggerBlobDownload(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1500);
+  }
+
+  async function exportExcel168() {
+    const btn = $("btn-export-excel");
+    const statusEl = $("export-excel-status");
+    const payload = buildSimPayload();
+    btn.disabled = true;
+    btn.innerHTML = `<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i><span>Generando análisis de 168 cultivos...</span>`;
+    icons();
+    if (statusEl) {
+      statusEl.textContent = "Calculando el escenario para las 168 variedades oficiales en tu parcela...";
+      statusEl.classList.remove("hidden");
+    }
+
+    try {
+      const res = await fetch("/api/export-excel", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const ct = (res.headers.get("content-type") || "").toLowerCase();
+      if (!res.ok || (!ct.includes("spreadsheetml") && !ct.includes("octet-stream") && !ct.includes("text/csv"))) {
+        throw new Error(`Exportación HTTP ${res.status}`);
+      }
+      const blob = await res.blob();
+      const disp = res.headers.get("content-disposition") || "";
+      const match = disp.match(/filename="?([^";\n]+)"?/i);
+      const fallbackName = ct.includes("text/csv")
+        ? "Kultiva_Simulacion_168_Cultivos_Coahuila.csv"
+        : "Kultiva_Simulacion_168_Cultivos_Coahuila.xlsx";
+      triggerBlobDownload(blob, match ? match[1] : fallbackName);
+      if (statusEl) {
+        statusEl.textContent = "Archivo descargado: Top 5 de rotaciones + simulación completa de los 168 cultivos.";
+      }
+    } catch (err) {
+      if (window.KultivaOffline && typeof window.KultivaOffline.generate168Csv === "function") {
+        const csvContent = window.KultivaOffline.generate168Csv(payload);
+        const csvBlob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+        triggerBlobDownload(csvBlob, "Kultiva_Simulacion_168_Cultivos_Coahuila_Offline.csv");
+        if (statusEl) {
+          statusEl.textContent = "Modo sin conexión: se descargó la tabla completa de 168 cultivos en CSV compatible con Excel.";
+        }
+      } else {
+        console.error(err);
+        if (statusEl) {
+          statusEl.textContent = "No se pudo descargar el archivo de Excel. Verifica tu conexión e intenta de nuevo.";
+        }
+      }
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = `<i data-lucide="file-spreadsheet" class="w-4 h-4"></i><span>Descargar Excel completo (168 cultivos)</span>`;
+      icons();
+    }
   }
 
   function setRain(pct) {
@@ -1198,46 +1287,43 @@
     debounceTimer = setTimeout(simulate, delay);
   }
 
+  function applySimulationResult(data) {
+    state.lastSimResult = data;
+    updateResolvedCropHint(data);
+    if (data.parcel_context && data.parcel_context.problema_principal && $("soil-problem")) {
+      const prefix = data.is_custom_soil ? "Diagnóstico en campo (personalizado): " : "Diagnóstico local: ";
+      $("soil-problem").textContent = `${prefix}${data.parcel_context.problema_principal}`;
+    }
+    renderBaseline(data);
+    renderSolutions(data);
+    renderPrintSheet();
+  }
+
   async function simulate() {
     const seq = ++reqSeq;
     $("loading").classList.remove("hidden");
+    const payload = buildSimPayload();
     try {
       const res = await fetch("/api/simulate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          location_id: state.locationId,
-          hectares: state.hectares,
-          weight_water: state.wWater / 100,
-          weight_profit: state.wProfit / 100,
-          weight_nitrogen: state.wNitrogen / 100,
-          rain_reduction_pct: state.rainPct / 100,
-          temp_increase_c: state.tempIncreaseC,
-          irrigation_mode: state.irrigationMode,
-          market_goal: state.marketGoal,
-          current_crop: state.currentCrop,
-          custom_crop_name: state.currentCrop === "__otro__" ? state.customCropName.trim() : null,
-          custom_crop_water_tier: state.customCropWaterTier,
-          soil_override: state.soilOverride,
-          fertilizer_type: state.fertilizerType,
-          tillage_mode: state.tillageMode,
-          main_concern: state.mainConcerns,
-          selected_problems: state.mainConcerns,
-        }),
+        body: JSON.stringify(payload),
       });
       if (!res.ok) throw new Error(await res.text());
       const data = await res.json();
       if (seq !== reqSeq) return;
-      state.lastSimResult = data;
-      updateResolvedCropHint(data);
-      if (data.parcel_context && data.parcel_context.problema_principal && $("soil-problem")) {
-        const prefix = data.is_custom_soil ? "Diagnóstico en campo (personalizado): " : "Diagnóstico local: ";
-        $("soil-problem").textContent = `${prefix}${data.parcel_context.problema_principal}`;
-      }
-      renderBaseline(data);
-      renderSolutions(data);
-      renderPrintSheet();
+      applySimulationResult(data);
     } catch (err) {
+      if (window.KultivaOffline && typeof window.KultivaOffline.simulateScenarios === "function") {
+        try {
+          const offlineData = window.KultivaOffline.simulateScenarios(payload);
+          if (seq !== reqSeq) return;
+          applySimulationResult(offlineData);
+          return;
+        } catch (offErr) {
+          console.error(offErr);
+        }
+      }
       console.error(err);
       $("baseline-card").innerHTML = `<div class="card text-sm text-red-700">No se pudo calcular el diagnóstico.</div>`;
       $("plans").innerHTML = `<div class="card text-sm text-red-700">No se pudo calcular la simulación.</div>`;
@@ -1466,15 +1552,28 @@
     const basePlan = data.plans.find((p) => p.plan_id === "plan_actual") || data.plans[0];
     const alternatives = data.plans.filter((p) => p.plan_id !== "plan_actual");
 
-    // Ordenar de menor a mayor suitability_score: primero la Primera Alternativa (buena), debajo la Mejor Opción (óptima)
-    const sorted = [...alternatives].sort((a, b) => a.suitability_score - b.suitability_score);
+    // Ordenar de menor a mayor afinidad: alternativa #5 arriba hasta la Mejor Opción (#1) abajo
+    const sorted = [...alternatives].sort((a, b) => {
+      if (a.rank != null && b.rank != null) return b.rank - a.rank;
+      return a.suitability_score - b.suitability_score;
+    });
     const haInfo = getHectareDisplay();
     const plansEl = $("plans");
+    const RANK_BADGES = {
+      1: "Mejor opción (#1 Recomendada)",
+      2: "Segunda alternativa (#2)",
+      3: "Tercera alternativa (#3)",
+      4: "Cuarta alternativa (#4)",
+      5: "Quinta alternativa (#5)",
+    };
 
     plansEl.innerHTML = sorted
       .map((p, idx) => {
-        const isOptimal = idx === sorted.length - 1;
-        const delayMs = [0, 70, 140][idx] ?? idx * 70;
+        const totalAlts = sorted.length;
+        const displayRank = p.rank != null ? Number(p.rank) : totalAlts - idx;
+        const isOptimal = displayRank === 1 || idx === totalAlts - 1;
+        const delayMs = [0, 60, 120, 180, 240][idx] ?? idx * 60;
+        const badgeLabel = RANK_BADGES[displayRank] || `Alternativa (#${displayRank})`;
         const bal = p.balance_nitrogeno_y_cobertura || {};
         const extraMoney = p.ingreso_neto_total_mxn - (basePlan ? basePlan.ingreso_neto_total_mxn : 0);
         const extraMoneyStr =
@@ -1498,8 +1597,8 @@
         return `
         <article class="card plan-card ${isOptimal ? "best" : ""} result-enter" style="animation-delay: ${delayMs}ms">
           ${isOptimal
-            ? `<div class="best-tag"><i data-lucide="award" class="w-3.5 h-3.5"></i> Mejor opción</div>`
-            : `<div class="alt-tag"><i data-lucide="check-circle-2" class="w-3.5 h-3.5"></i> Primera alternativa</div>`
+            ? `<div class="best-tag"><i data-lucide="award" class="w-3.5 h-3.5"></i> ${badgeLabel}</div>`
+            : `<div class="alt-tag"><i data-lucide="check-circle-2" class="w-3.5 h-3.5"></i> ${badgeLabel}</div>`
           }
 
           <div class="flex items-start justify-between gap-3">
@@ -1572,7 +1671,7 @@
     if (exportCard) {
       exportCard.classList.remove("result-enter");
       void exportCard.offsetWidth;
-      exportCard.style.animationDelay = `${Math.min(sorted.length, 2) * 70}ms`;
+      exportCard.style.animationDelay = `${Math.min(sorted.length, 5) * 60}ms`;
       exportCard.classList.add("result-enter");
     }
 
@@ -1612,17 +1711,27 @@
       )
       .join("");
 
-    const summaryRows = data.plans
-      .map((p) => {
+    const baseRow = data.plans.find((p) => p.plan_id === "plan_actual");
+    const altRowsSorted = data.plans
+      .filter((p) => p.plan_id !== "plan_actual")
+      .sort((a, b) => (a.rank ?? 99) - (b.rank ?? 99) || b.suitability_score - a.suitability_score);
+    const orderedPlans = baseRow ? [baseRow, ...altRowsSorted] : altRowsSorted;
+
+    const summaryRows = orderedPlans
+      .map((p, idx) => {
+        const isBase = p.plan_id === "plan_actual";
         const isRec = p.plan_id === data.recommended_plan_id;
-        const waterStr =
-          p.plan_id === "plan_actual"
-            ? `Consumo base: ${NUM.format(Math.round(p.consumo_agua_litros || 0))} L`
-            : `Ahorro: ${NUM.format(Math.round(p.ahorro_agua_litros || 0))} L`;
+        const rankNum = p.rank != null ? p.rank : (baseRow ? idx : idx + 1);
+        const label = isBase
+          ? `<b>${p.plan_name}</b> (Línea base)`
+          : `<b>#${rankNum} · ${p.plan_name}</b> ${isRec ? "(Mejor Opción · " : "("}${Math.round(p.suitability_score)}%)`;
+        const waterStr = isBase
+          ? `Consumo base: ${NUM.format(Math.round(p.consumo_agua_litros || 0))} L`
+          : `Ahorro: ${NUM.format(Math.round(p.ahorro_agua_litros || 0))} L`;
         const bal = p.balance_nitrogeno_y_cobertura || {};
         return `
         <tr>
-          <td><b>${p.plan_name}</b> ${isRec ? "(Mejor Opción)" : ""}</td>
+          <td>${label}</td>
           <td>${CURRENCY.format(p.ingreso_neto_total_mxn)}</td>
           <td>${waterStr}</td>
           <td>${bal.ciclos_fijacion_nitrogeno_3a} ciclos N · ${bal.meses_suelo_protegido_3a}/36 meses cubierto</td>
@@ -1686,7 +1795,7 @@
         <tbody>${rotRows}</tbody>
       </table>
 
-      <div class="ps-h">3. Comparativa de Planes a 3 Años (${NUM.format(state.hectares)} ha)</div>
+      <div class="ps-h">3. Comparativa Top 5 de Planes a 3 Años vs. Línea Base (${NUM.format(state.hectares)} ha)</div>
       <table class="ps-table">
         <thead>
           <tr>
@@ -2018,8 +2127,18 @@
   /* ---------- Init ---------- */
   async function init() {
     setupPwaInstall();
-    const res = await fetch("/api/init");
-    const d = await res.json();
+    let d;
+    try {
+      const res = await fetch("/api/init");
+      if (!res.ok) throw new Error("init failed");
+      d = await res.json();
+    } catch (err) {
+      if (window.KultivaOffline && typeof window.KultivaOffline.getInitPayload === "function") {
+        d = window.KultivaOffline.getInitPayload();
+      } else {
+        throw err;
+      }
+    }
     state.suelos = Object.fromEntries(d.suelos.map((s) => [s.location_id, s]));
     state.cultivos = d.cultivos || [];
     state.familias = d.familias_cultivo || [];

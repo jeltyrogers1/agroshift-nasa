@@ -1291,7 +1291,7 @@ body *, input, select, button, output, table { font-family: inherit; font-varian
 #app-shell .card.plan-card,
 #app-shell .card.plan-card[class*="border-amber"] { border-color: var(--hairline); background: var(--surface); }
 #app-shell .card.plan-card { gap: 26px; }
-#app-shell .card.plan-card.best { border: 1px solid var(--hairline-strong); background: rgba(255, 255, 255, 0.06); box-shadow: none; }
+#app-shell .card.plan-card.best { border: 1.5px solid #a3e635; background: rgba(163, 230, 53, 0.08); box-shadow: 0 0 0 1px rgba(163, 230, 53, 0.18); }
 #app-shell .card + .card { margin-top: 0; }
 
 /* ---------- Tipografía ---------- */
@@ -1412,6 +1412,22 @@ select option, select optgroup { background: #111912; }
   box-shadow: none;
 }
 #app-shell #btn-export:hover { background: #b6f04f; }
+#app-shell #btn-export-excel {
+  background: rgba(163, 230, 53, 0.12);
+  color: #ecfccb;
+  border: 1.5px solid #a3e635;
+  border-radius: var(--radius);
+  min-height: 54px;
+  font-weight: 700;
+  box-shadow: none;
+}
+#app-shell #btn-export-excel:hover:not(:disabled) {
+  background: rgba(163, 230, 53, 0.22);
+}
+#app-shell #btn-export-excel:disabled {
+  opacity: 0.65;
+  cursor: wait;
+}
 .btn-toggle, .btn-toggle-heat {
   background: transparent;
   border: 1px solid var(--hairline-strong);
@@ -1496,7 +1512,7 @@ select option, select optgroup { background: #111912; }
 .traffic-box, .pill, .traffic-VERDE, .traffic-AMARILLO, .traffic-ROJO { border: 1px solid var(--hairline-strong); border-radius: 12px; padding: 12px 8px; }
 .traffic-box .t-lbl { font-size: 0.62rem; letter-spacing: 0.07em; color: var(--txt-faint); }
 .traffic-box .t-val { font-weight: 600; font-size: 0.8rem; margin-top: 4px; }
-.best-tag { background: transparent; color: var(--txt-main); border: 1px solid var(--hairline-strong); font-weight: 600; letter-spacing: 0.06em; }
+.best-tag { background: rgba(163, 230, 53, 0.14); color: #a3e635; border: 1px solid rgba(163, 230, 53, 0.55); font-weight: 700; letter-spacing: 0.06em; }
 .alt-tag { background: transparent; color: var(--txt-soft); border: 1px solid var(--hairline); font-weight: 600; letter-spacing: 0.06em; }
 #app-shell [class*="bg-amber-100"] { background: transparent; border: 1px solid var(--hairline-strong); color: var(--txt-soft); }
 #loading { background: transparent; color: var(--txt-soft); }

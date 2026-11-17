@@ -836,14 +836,142 @@ def _compute_parcel_climate_metrics(
     }
 
 
+def _pick_high_margin_crops(
+    cultivos: dict[str, dict[str, Any]],
+    location_id: str,
+    soil: dict[str, Any],
+    irrigation_mode: str,
+    market_goal: str,
+    concerns: list[str],
+    base_family: str,
+    is_high_altitude: bool,
+) -> tuple[str, str]:
+    """Selecciona cultivos comerciales oficiales de alto margen viables para la altitud y régimen hídrico."""
+    candidates = [
+        v
+        for k, v in cultivos.items()
+        if k != "Barbecho_Suelo_Desnudo"
+        and k != "__otro__"
+        and v.get("modo_en_kultiva") == "Rotacion_Ciclica"
+    ]
+
+    def _is_viable(v: dict[str, Any]) -> bool:
+        vid_low = v["cultivo"].lower()
+        geo = _strip_accents(f"{v.get('municipios_coahuila', '')} {v.get('beneficio_principal', '')}")
+        modal = _strip_accents(v.get("modalidad_hidrica_tipica", ""))
+        if is_high_altitude:
+            if "sorgo" in vid_low or "no apto sierra" in geo:
+                return False
+            if float(v.get("temp_min_c", 10.0)) >= 12.0 or float(v.get("umbral_helada_c", 2.0)) > 1.5:
+                return False
+        if irrigation_mode == "temporal":
+            has_temp = any(tok in modal for tok in ("temporal", "auxilio", "residual", "agostadero"))
+            if not has_temp or float(v.get("consumo_agua_mm", 500.0)) > 530.0:
+                return False
+            if "invernadero" in modal and "cielo abierto" not in _strip_accents(v.get("nombre_comun", "")):
+                return False
+        return True
+
+    viable = [v for v in candidates if _is_viable(v)]
+    if not viable:
+        viable = [
+            v
+            for v in candidates
+            if not (is_high_altitude and "sorgo" in v["cultivo"].lower())
+        ]
+
+    pv_pool = [
+        v
+        for v in viable
+        if v.get("ciclo_norm") == "Primavera-Verano" and v.get("familia_cultivo") != base_family
+    ] or [v for v in viable if v.get("ciclo_norm") == "Primavera-Verano"]
+
+    oi_pool = [
+        v
+        for v in viable
+        if v.get("ciclo_norm") == "Otono-Invierno" and v.get("familia_cultivo") != base_family
+    ] or [v for v in viable if v.get("ciclo_norm") == "Otono-Invierno"]
+
+    def _profit_site_key(v: dict[str, Any]) -> tuple[float, float, str]:
+        site_s = _score_variety_for_site(v, location_id, soil, irrigation_mode, market_goal, concerns)
+        net_norm = float(v.get("ingreso_neto_ha_mxn", 0.0)) / 1000.0
+        # Balancear margen comercial y viabilidad climática/hídrica del sitio
+        return (net_norm * 0.75 + site_s * 1.15, -float(v.get("consumo_agua_mm", 400.0)), v["cultivo"])
+
+    best_pv = max(pv_pool, key=_profit_site_key)["cultivo"]
+    best_oi = max(oi_pool, key=_profit_site_key)["cultivo"]
+    return best_pv, best_oi
+
+
+def _pick_resilience_crops(
+    cultivos: dict[str, dict[str, Any]],
+    location_id: str,
+    soil: dict[str, Any],
+    irrigation_mode: str,
+    market_goal: str,
+    concerns: list[str],
+    base_family: str,
+    is_high_altitude: bool,
+) -> tuple[str, str, str]:
+    """Selecciona variedades nativas/criollas o de raíz profunda con máxima tolerancia a extremos climáticos."""
+    candidates = [
+        v
+        for k, v in cultivos.items()
+        if k != "Barbecho_Suelo_Desnudo"
+        and k != "__otro__"
+        and v.get("modo_en_kultiva") == "Rotacion_Ciclica"
+    ]
+    if is_high_altitude:
+        candidates = [
+            v
+            for v in candidates
+            if "sorgo" not in v["cultivo"].lower()
+            and "no apto sierra" not in _strip_accents(v.get("municipios_coahuila", ""))
+            and float(v.get("temp_min_c", 10.0)) <= 12.0
+        ]
+
+    def _resilience_key(v: dict[str, Any]) -> tuple[float, str]:
+        geo = _strip_accents(
+            f"{v.get('clasificacion_oficial', '')} {v.get('fuente_oficial', '')} {v.get('nombre_comun', '')}"
+        )
+        is_native = 16.0 if any(tok in geo for tok in ("nativ", "crioll", "conabio", "raza")) else 0.0
+        # Priorizar granos, leguminosas, oleaginosas y pastos rústicos de temporal para resiliencia
+        fam_bonus = 10.0 if v.get("categoria_siap") in {"Granos_y_Leguminosas", "Industriales_y_Oleaginosas", "Forrajes"} else 0.0
+        diff_fam = 8.0 if v.get("familia_cultivo") != base_family else 0.0
+        site_s = _score_variety_for_site(v, location_id, soil, irrigation_mode, market_goal, concerns)
+        drought_s = float(v.get("drought_tolerance_score", 2)) * 12.0
+        frost_s = float(v.get("frost_tolerance_score", 2)) * (14.0 if is_high_altitude else 5.0)
+        erosion_s = float(v.get("erosion_control_score", 2)) * 8.0
+        root_s = min(15.0, float(v.get("profundidad_raiz_cm", 60)) / 15.0)
+        return (is_native + fam_bonus + diff_fam + drought_s + frost_s + erosion_s + root_s + site_s * 0.45, v["cultivo"])
+
+    pv_pool = [v for v in candidates if v.get("ciclo_norm") == "Primavera-Verano"]
+    oi_pool = [v for v in candidates if v.get("ciclo_norm") == "Otono-Invierno"]
+
+    pv_sorted = sorted(pv_pool, key=_resilience_key, reverse=True)
+    oi_sorted = sorted(oi_pool, key=_resilience_key, reverse=True)
+
+    pv_1 = pv_sorted[0]["cultivo"]
+    # Elegir segunda variedad PV de distinta familia para evitar repetir familia consecutiva
+    pv_2 = next(
+        (v["cultivo"] for v in pv_sorted[1:] if v["familia_cultivo"] != cultivos[pv_1]["familia_cultivo"]),
+        pv_sorted[min(1, len(pv_sorted) - 1)]["cultivo"],
+    )
+    oi_1 = oi_sorted[0]["cultivo"]
+    return pv_1, pv_2, oi_1
+
+
 def _select_rotation_partners(
     location_id: str,
     soil: dict[str, Any],
+    irrigation_mode: str,
     market_goal: str,
+    concerns: list[str],
     current_crop: str,
     crop_info: dict[str, Any],
-) -> dict[str, str]:
-    """Elige variedades oficiales específicas para rotación respetando altitud/frío, aridez y familia base."""
+    cultivos: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    """Elige variedades oficiales específicas para los 5 planes respetando altitud/frío, aridez y familia base."""
     elev_m = float(soil.get("local_elevation_m", 1700.0))
     is_high_altitude = location_id == "Los_Lirios_Arteaga" or elev_m >= 2000.0
     is_hyper_arid = location_id == "General_Cepeda" or (
@@ -852,21 +980,27 @@ def _select_rotation_partners(
     base_family = crop_info.get("familia_cultivo", "")
 
     if is_high_altitude:
-        # En sierra y >= 2,000 msnm se descarta Sorgo y se priorizan cultivos tolerantes a heladas
         winter_primary = "Cebada_Forrajera_Precoz_Sierra_Fria"
         winter_alt = "Avena_Negra_Strigosa_Cobertura_Rustica"
         legume_pv = "Frijol_Negro_Altiplano"
         legume_pv_alt = "Frijol_Ayocote_Patol_Sierra"
-        # Cultivos PV/anuales de baja demanda y tolerancia al frío para conservar agua sin usar Sorgo
         if base_family in {"Cebada_Grano", "Cebada_Forrajera"}:
             drought_pv = "Avena_Grano_Precoz_Temporal_Altura"
-        elif base_family in {"Avena_Grano", "Avena_Forrajera"}:
-            drought_pv = "Cebada_Grano_Precoz_Temporal_Altura"
         else:
-            drought_pv = "Avena_Grano_Precoz_Temporal_Altura"
-        drought_pv_alt = "Trigo_Harinero_Temporal_Valles_Altos" if base_family != "Trigo_Grano" else "Cebada_Grano_Precoz_Temporal_Altura"
-        grain_or_cover_pv = "Maiz_Nativo_Elotes_Conicos" if base_family != "Maiz" else "Avena_Grano_Precoz_Temporal_Altura"
+            drought_pv = "Cebada_Grano_Precoz_Temporal_Altura"
+        drought_pv_alt = (
+            "Trigo_Harinero_Temporal_Valles_Altos"
+            if base_family != "Trigo_Grano"
+            else "Avena_Grano_Precoz_Temporal_Altura"
+        )
+        grain_or_cover_pv = (
+            "Maiz_Nativo_Elotes_Conicos" if base_family != "Maiz" else "Avena_Grano_Precoz_Temporal_Altura"
+        )
         perennial_legume = "Alfalfa_Semi_Latente_Valles_Templados"
+        div_forage_pv = "Maiz_Forrajero_Valles_Altos_Sierra_Fresca"
+        div_commercial_pv = "Trigo_Harinero_Temporal_Valles_Altos"
+        div_oi_1 = "Cebada_Forrajera_Imberbe_Arista_Lisa"
+        div_oi_2 = "Avena_Forrajera_Resistente_Roya_INIFAP"
     elif is_hyper_arid:
         winter_primary = "Avena_Negra_Strigosa_Cobertura_Rustica"
         winter_alt = "Cebada_Forrajera_Precoz_Sierra_Fria"
@@ -878,11 +1012,18 @@ def _select_rotation_partners(
             drought_pv = "Sorgo_Grano_Precoz_Temporal"
         else:
             drought_pv = "Sorgo_Forrajero_Achicalado_Sudan_Multicorte"
-        drought_pv_alt = "Frijol_Pinto_Centauro"
-        grain_or_cover_pv = "Sorgo_Forrajero_Achicalado_Sudan_Multicorte" if base_family != "Sorgo_Forrajero" else "Maiz_Nativo_Raton"
+        drought_pv_alt = "Girasol_Confitera_Polinizacion_Libre_Temporal"
+        grain_or_cover_pv = (
+            "Sorgo_Forrajero_Achicalado_Sudan_Multicorte"
+            if base_family != "Sorgo_Forrajero"
+            else "Maiz_Nativo_Raton"
+        )
         perennial_legume = "Alfalfa_Tolerante_Salinidad_Riego_Limitado"
+        div_forage_pv = "Pasto_Sudan_Forrajero_Verano"
+        div_commercial_pv = "Girasol_Forrajero_Silero_Doble_Proposito"
+        div_oi_1 = "Avena_Forrajera_Achicalada_Henificada_SIAP"
+        div_oi_2 = "Cebada_Forrajera_Achicalada_Henificada_SIAP"
     else:
-        # Valles templados (UAAAN La Narro / Saltillo)
         winter_primary = "Avena_Forrajera_Precoz_Temporal_Cobertura"
         winter_alt = "Cebada_Forrajera_Precoz_Sierra_Fria"
         legume_pv = "Frijol_Pinto_Saltillo"
@@ -893,17 +1034,45 @@ def _select_rotation_partners(
             drought_pv = "Sorgo_Grano_Tolerante_Frio_Valles_Altos"
         else:
             drought_pv = "Sorgo_Forrajero_Tolerante_Frio_Valles_Altos"
-        drought_pv_alt = "Frijol_Pinto_Saltillo"
-        grain_or_cover_pv = "Maiz_Mejorado_VPL_Precoz_UAAAN_INIFAP" if base_family != "Maiz" else "Sorgo_Grano_Tolerante_Frio_Valles_Altos"
+        drought_pv_alt = "Girasol_Confitera_Polinizacion_Libre_Temporal"
+        grain_or_cover_pv = (
+            "Maiz_Mejorado_VPL_Precoz_UAAAN_INIFAP"
+            if base_family != "Maiz"
+            else "Sorgo_Grano_Tolerante_Frio_Valles_Altos"
+        )
         perennial_legume = "Alfalfa_Semi_Latente_Valles_Templados"
+        div_forage_pv = "Girasol_Forrajero_Silero_Doble_Proposito"
+        div_commercial_pv = "Frijol_Flor_de_Mayo"
+        div_oi_1 = "Cebada_Forrajera_Imberbe_Arista_Lisa"
+        div_oi_2 = "Avena_Forrajera_Achicalada_Henificada_SIAP"
 
-    # Evitar repetir exactamente el mismo winter_primary si current_crop ya es esa cobertura invernal
     if current_crop == winter_primary:
         winter_primary, winter_alt = winter_alt, winter_primary
     if current_crop == legume_pv:
         legume_pv, legume_pv_alt = legume_pv_alt, legume_pv
     if current_crop == drought_pv:
         drought_pv = drought_pv_alt if drought_pv_alt != current_crop else legume_pv
+
+    high_profit_pv, high_profit_oi = _pick_high_margin_crops(
+        cultivos=cultivos,
+        location_id=location_id,
+        soil=soil,
+        irrigation_mode=irrigation_mode,
+        market_goal=market_goal,
+        concerns=concerns,
+        base_family=base_family,
+        is_high_altitude=is_high_altitude,
+    )
+    res_pv_1, res_pv_2, res_oi_1 = _pick_resilience_crops(
+        cultivos=cultivos,
+        location_id=location_id,
+        soil=soil,
+        irrigation_mode=irrigation_mode,
+        market_goal=market_goal,
+        concerns=concerns,
+        base_family=base_family,
+        is_high_altitude=is_high_altitude,
+    )
 
     return {
         "winter_primary": winter_primary,
@@ -914,8 +1083,17 @@ def _select_rotation_partners(
         "drought_pv_alt": drought_pv_alt,
         "grain_or_cover_pv": grain_or_cover_pv,
         "perennial_legume": perennial_legume,
-        "is_high_altitude": "1" if is_high_altitude else "0",
-        "is_hyper_arid": "1" if is_hyper_arid else "0",
+        "high_profit_pv": high_profit_pv,
+        "high_profit_oi": high_profit_oi,
+        "res_pv_1": res_pv_1,
+        "res_pv_2": res_pv_2,
+        "res_oi_1": res_oi_1,
+        "div_forage_pv": div_forage_pv,
+        "div_commercial_pv": div_commercial_pv,
+        "div_oi_1": div_oi_1,
+        "div_oi_2": div_oi_2,
+        "is_high_altitude": is_high_altitude,
+        "is_hyper_arid": is_hyper_arid,
     }
 
 
@@ -924,10 +1102,12 @@ def _build_rotation_templates(
     current_crop: str,
     cultivos: dict[str, dict[str, Any]],
     soil: dict[str, Any] | None = None,
+    irrigation_mode: str = "temporal",
     market_goal: str = "grano",
+    concerns: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     """
-    Construye los 3 planes comparativos a 3 años (6 ciclos) adaptados a la parcela,
+    Construye plan_actual + 5 planes alternativos a 3 años adaptados a la parcela,
     respetando clima/altitud (>=2,000 msnm sin Sorgo) y `modo_en_kultiva`
     (frutales y perennes intercalados conservan la huerta activa los 3 años).
     """
@@ -938,15 +1118,25 @@ def _build_rotation_templates(
     modo_kultiva = crop_info.get("modo_en_kultiva", "Rotacion_Ciclica")
     base_family = crop_info.get("familia_cultivo", "")
 
-    partners = _select_rotation_partners(location_id, soil_ctx, market_goal, current_crop, crop_info)
-    winter_primary = partners["winter_primary"]
-    winter_alt = partners["winter_alt"]
-    legume_pv = partners["legume_pv"]
-    drought_pv = partners["drought_pv"]
-    grain_or_cover_pv = partners["grain_or_cover_pv"]
-    perennial_legume = partners["perennial_legume"]
-    is_high_altitude = partners["is_high_altitude"] == "1"
-    is_hyper_arid = partners["is_hyper_arid"] == "1"
+    p = _select_rotation_partners(
+        location_id=location_id,
+        soil=soil_ctx,
+        irrigation_mode=irrigation_mode,
+        market_goal=market_goal,
+        concerns=concerns or ["sequia"],
+        current_crop=current_crop,
+        crop_info=crop_info,
+        cultivos=cultivos,
+    )
+    winter_primary = p["winter_primary"]
+    winter_alt = p["winter_alt"]
+    legume_pv = p["legume_pv"]
+    legume_pv_alt = p["legume_pv_alt"]
+    drought_pv = p["drought_pv"]
+    grain_or_cover_pv = p["grain_or_cover_pv"]
+    perennial_legume = p["perennial_legume"]
+    is_high_altitude = bool(p["is_high_altitude"])
+    is_hyper_arid = bool(p["is_hyper_arid"])
 
     # =========================================================================
     # MODO A: COBERTURA INTERCALADA PERENNE (Frutales Perennes, Nopal, Maguey)
@@ -964,11 +1154,11 @@ def _build_rotation_templates(
             ],
         }
         plan_conservacion = {
-            "plan_id": "plan_conservacion_hidrica",
-            "plan_name": "Plan Conservación Hídrica (Cobertura en Callejones)",
+            "plan_id": "plan_conservacion",
+            "plan_name": "Conservación Hídrica (Cobertura Mínima en Callejones)",
             "strategy_focus": (
-                f"Mantiene activa tu huerta de {crop_label} los 3 años e intercala cobertura invernal de bajo consumo "
-                f"en callejones para frenar evaporación y erosión"
+                f"Mantiene activa tu huerta de {crop_label} los 3 años e intercala cobertura invernal de mínimo "
+                f"consumo hídrico en callejones para frenar evaporación"
             ),
             "years": [
                 {"year": 1, "pv": current_crop, "oi": winter_primary, "intercropped": True},
@@ -976,7 +1166,6 @@ def _build_rotation_templates(
                 {"year": 3, "pv": current_crop, "oi": winter_primary, "intercropped": True},
             ],
         }
-        # En Plan Regenerativo se mantiene el frutal perenne activo e intercala cobertura + leguminosas fijadoras en callejones
         plan_regenerativo = {
             "plan_id": "plan_regenerativo",
             "plan_name": "Plan Regenerativo (Callejones Vivos + Nitrógeno)",
@@ -987,21 +1176,94 @@ def _build_rotation_templates(
             "years": [
                 {"year": 1, "pv": current_crop, "oi": winter_primary, "intercropped": True},
                 {"year": 2, "pv": current_crop, "oi": winter_alt, "alley_pv": legume_pv, "intercropped": True},
+                {"year": 3, "pv": current_crop, "oi": winter_primary, "alley_pv": legume_pv_alt, "intercropped": True},
+            ],
+        }
+        cash_alley_pv = (
+            "Frijol_Ejotero"
+            if irrigation_mode == "riego"
+            else "Calabacita_Criolla_Regional_Guia_CONABIO"
+        )
+        cash_alley_oi = (
+            "Cebolla_Cambray_Verdeo_Ciclo_Corto"
+            if (irrigation_mode == "riego" and not is_high_altitude)
+            else ("Brocoli_Fresco_Valles_Frescos" if irrigation_mode == "riego" else p["div_oi_1"])
+        )
+        plan_rentabilidad = {
+            "plan_id": "plan_rentabilidad",
+            "plan_name": "Alta Rentabilidad Regional (Callejones Comerciales)",
+            "strategy_focus": (
+                f"Conserva tu huerta de {crop_label} los 3 años y aprovecha los callejones con cultivos comerciales de "
+                f"ciclo corto para sumar ingreso sin dejar el suelo desnudo"
+            ),
+            "years": [
+                {"year": 1, "pv": current_crop, "oi": winter_primary, "intercropped": True},
+                {
+                    "year": 2,
+                    "pv": current_crop,
+                    "oi": cash_alley_oi,
+                    "alley_pv": cash_alley_pv,
+                    "alley_cash_crop": True,
+                    "intercropped": True,
+                },
                 {
                     "year": 3,
                     "pv": current_crop,
-                    "oi": winter_primary,
-                    "alley_pv": partners["legume_pv_alt"],
+                    "oi": cash_alley_oi,
+                    "alley_pv": legume_pv,
+                    "alley_cash_crop": True,
                     "intercropped": True,
                 },
             ],
         }
-        return [plan_actual, plan_conservacion, plan_regenerativo]
+        res_alley_oi_1 = "Triticale_Forrajero_Invierno_UAAAN_INIFAP"
+        res_alley_oi_2 = "Avena_Negra_Strigosa_Cobertura_Rustica"
+        res_alley_pv = "Frijol_Ayocote_Patol_Sierra" if is_high_altitude else "Frijol_Pinto_Villa"
+        plan_resiliencia = {
+            "plan_id": "plan_resiliencia",
+            "plan_name": "Resiliencia Climática Extremos (Callejones Rústicos)",
+            "strategy_focus": (
+                f"Mantiene la huerta de {crop_label} protegida los 3 años con coberturas rústicas de raíz profunda "
+                f"y leguminosa criolla en callejones ante sequías y heladas"
+            ),
+            "years": [
+                {"year": 1, "pv": current_crop, "oi": res_alley_oi_1, "intercropped": True},
+                {"year": 2, "pv": current_crop, "oi": res_alley_oi_2, "alley_pv": res_alley_pv, "intercropped": True},
+                {"year": 3, "pv": current_crop, "oi": res_alley_oi_1, "intercropped": True},
+            ],
+        }
+        plan_diversificacion = {
+            "plan_id": "plan_diversificacion",
+            "plan_name": "Diversificación Equilibrada (Huerta + Forraje en Callejones)",
+            "strategy_focus": (
+                f"Mantiene activa la huerta de {crop_label} los 3 años intercalando pacas forrajeras imberbes y "
+                f"leguminosa de grano en callejones para balance económico y de biomasa"
+            ),
+            "years": [
+                {"year": 1, "pv": current_crop, "oi": p["div_oi_1"], "alley_cash_crop": True, "intercropped": True},
+                {
+                    "year": 2,
+                    "pv": current_crop,
+                    "oi": p["div_oi_2"],
+                    "alley_pv": "Frijol_Bayo",
+                    "alley_cash_crop": True,
+                    "intercropped": True,
+                },
+                {"year": 3, "pv": current_crop, "oi": p["div_oi_1"], "alley_cash_crop": True, "intercropped": True},
+            ],
+        }
+        return [
+            plan_actual,
+            plan_conservacion,
+            plan_regenerativo,
+            plan_rentabilidad,
+            plan_resiliencia,
+            plan_diversificacion,
+        ]
 
     # =========================================================================
     # MODO B: ROTACIÓN CÍCLICA (Granos, Leguminosas, Forrajes, Hortalizas, Oleaginosas)
     # =========================================================================
-    # 1. Plan Actual (Línea Base del Agricultor: monocultivo de current_crop durante 3 años)
     if ciclo_norm == "Todo_el_ano":
         actual_years = [
             {"year": 1, "pv": current_crop, "oi": current_crop},
@@ -1031,7 +1293,7 @@ def _build_rotation_templates(
         "years": actual_years,
     }
 
-    # 2. Plan Conservación Hídrica (Mantiene current_crop en Año 1 y rota en Años 2 y 3 hacia mínimo consumo hídrico)
+    # 1. Conservación Hídrica
     if ciclo_norm == "Todo_el_ano":
         cons_y1 = {"year": 1, "pv": current_crop, "oi": current_crop}
         cons_y2 = {"year": 2, "pv": drought_pv, "oi": winter_primary}
@@ -1044,7 +1306,7 @@ def _build_rotation_templates(
         cons_y1 = {"year": 1, "pv": current_crop, "oi": winter_primary}
         if base_family == "Frijol":
             cons_y2 = {"year": 2, "pv": drought_pv, "oi": winter_alt}
-            cons_y3 = {"year": 3, "pv": current_crop, "oi": winter_primary}
+            cons_y3 = {"year": 3, "pv": p["drought_pv_alt"], "oi": winter_primary}
         elif base_family in {"Sorgo_Forrajero", "Sorgo_Grano"}:
             cons_y2 = {"year": 2, "pv": legume_pv, "oi": winter_alt}
             cons_y3 = {"year": 3, "pv": drought_pv, "oi": winter_primary}
@@ -1053,13 +1315,13 @@ def _build_rotation_templates(
             cons_y3 = {"year": 3, "pv": legume_pv, "oi": winter_primary}
 
     plan_conservacion = {
-        "plan_id": "plan_conservacion_hidrica",
-        "plan_name": "Plan Conservación Hídrica",
-        "strategy_focus": f"Año 1 con {crop_label} y rotación en Años 2–3 hacia cultivos de baja demanda hídrica y cobertura invernal",
+        "plan_id": "plan_conservacion",
+        "plan_name": "Conservación Hídrica",
+        "strategy_focus": f"Año 1 con {crop_label} y rotación en Años 2–3 hacia mínimo consumo hídrico y cobertura invernal",
         "years": [cons_y1, cons_y2, cons_y3],
     }
 
-    # 3. Plan Regenerativo (Mantiene current_crop en Año 1 y alterna en Años 2 y 3 con leguminosas y cobertura continua)
+    # 2. Plan Regenerativo
     if ciclo_norm == "Todo_el_ano":
         reg_y1 = {"year": 1, "pv": current_crop, "oi": current_crop}
         reg_y2 = {"year": 2, "pv": grain_or_cover_pv, "oi": winter_primary}
@@ -1067,38 +1329,119 @@ def _build_rotation_templates(
     elif ciclo_norm == "Otono-Invierno":
         reg_y1 = {"year": 1, "pv": legume_pv, "oi": current_crop}
         reg_y2 = {"year": 2, "pv": grain_or_cover_pv, "oi": winter_alt}
-        reg_y3 = {"year": 3, "pv": legume_pv, "oi": winter_primary}
+        reg_y3 = {"year": 3, "pv": legume_pv_alt, "oi": winter_primary}
     elif base_family == "Frijol":
         reg_y1 = {"year": 1, "pv": current_crop, "oi": winter_primary}
         reg_y2 = {"year": 2, "pv": grain_or_cover_pv, "oi": winter_alt}
-        reg_y3 = {"year": 3, "pv": current_crop, "oi": winter_primary}
+        reg_y3 = {"year": 3, "pv": perennial_legume, "oi": perennial_legume}
     elif base_family in {"Sorgo_Forrajero", "Sorgo_Grano"}:
         reg_y1 = {"year": 1, "pv": current_crop, "oi": winter_primary}
         reg_y2 = {"year": 2, "pv": legume_pv, "oi": winter_alt}
-        reg_y3 = {
-            "year": 3,
-            "pv": legume_pv if is_hyper_arid else grain_or_cover_pv,
-            "oi": winter_primary,
-        }
+        reg_y3 = {"year": 3, "pv": legume_pv_alt if is_hyper_arid else perennial_legume, "oi": winter_primary if is_hyper_arid else perennial_legume}
     else:
         reg_y1 = {"year": 1, "pv": current_crop, "oi": winter_primary}
         reg_y2 = {"year": 2, "pv": legume_pv, "oi": winter_alt}
         if is_hyper_arid:
-            reg_y3 = {"year": 3, "pv": drought_pv, "oi": winter_primary}
+            reg_y3 = {"year": 3, "pv": legume_pv_alt, "oi": winter_primary}
         elif is_high_altitude and float(crop_info.get("consumo_agua_mm", 450.0)) <= 450.0:
-            # En sierra con cultivos base de bajo consumo, priorizar leguminosa anual + cobertura fría para conservar ahorro hídrico
-            reg_y3 = {"year": 3, "pv": partners["legume_pv_alt"], "oi": winter_primary}
+            reg_y3 = {"year": 3, "pv": legume_pv_alt, "oi": winter_primary}
         else:
             reg_y3 = {"year": 3, "pv": perennial_legume, "oi": perennial_legume}
 
     plan_regenerativo = {
         "plan_id": "plan_regenerativo",
         "plan_name": "Plan Regenerativo (Nitrógeno y Cobertura)",
-        "strategy_focus": f"Año 1 con {crop_label} y alternancia en Años 2–3 con leguminosas fijadoras de nitrógeno y cobertura viva",
+        "strategy_focus": f"Año 1 con {crop_label} y alternancia en Años 2–3 con leguminosas fijadoras de nitrógeno y cobertura viva 12 meses",
         "years": [reg_y1, reg_y2, reg_y3],
     }
 
-    return [plan_actual, plan_conservacion, plan_regenerativo]
+    # 3. Alta Rentabilidad Regional
+    hp_pv = p["high_profit_pv"]
+    hp_oi = p["high_profit_oi"]
+    hp_legume = "Frijol_Ejotero" if (irrigation_mode == "riego" and not is_high_altitude) else legume_pv
+    if ciclo_norm == "Todo_el_ano":
+        rent_y1 = {"year": 1, "pv": current_crop, "oi": current_crop}
+        rent_y2 = {"year": 2, "pv": hp_pv, "oi": hp_oi}
+        rent_y3 = {"year": 3, "pv": hp_legume, "oi": winter_primary}
+    elif ciclo_norm == "Otono-Invierno":
+        rent_y1 = {"year": 1, "pv": hp_pv, "oi": current_crop}
+        rent_y2 = {"year": 2, "pv": hp_legume, "oi": hp_oi}
+        rent_y3 = {"year": 3, "pv": hp_pv, "oi": winter_primary}
+    else:
+        rent_y1 = {"year": 1, "pv": current_crop, "oi": hp_oi}
+        rent_y2 = {"year": 2, "pv": hp_pv, "oi": winter_alt}
+        rent_y3 = {"year": 3, "pv": hp_legume, "oi": hp_oi}
+
+    plan_rentabilidad = {
+        "plan_id": "plan_rentabilidad",
+        "plan_name": "Alta Rentabilidad Regional",
+        "strategy_focus": (
+            f"Año 1 con {crop_label} y rotación comercial en Años 2–3 con variedad de alto margen viable para tu altitud y agua"
+        ),
+        "years": [rent_y1, rent_y2, rent_y3],
+    }
+
+    # 4. Resiliencia Climática Extremos
+    res_pv_1 = p["res_pv_1"]
+    res_pv_2 = p["res_pv_2"]
+    res_oi_1 = p["res_oi_1"]
+    if ciclo_norm == "Todo_el_ano":
+        res_y1 = {"year": 1, "pv": current_crop, "oi": current_crop}
+        res_y2 = {"year": 2, "pv": res_pv_1, "oi": res_oi_1}
+        res_y3 = {"year": 3, "pv": res_pv_2, "oi": winter_alt}
+    elif ciclo_norm == "Otono-Invierno":
+        res_y1 = {"year": 1, "pv": res_pv_1, "oi": current_crop}
+        res_y2 = {"year": 2, "pv": res_pv_2, "oi": res_oi_1}
+        res_y3 = {"year": 3, "pv": res_pv_1, "oi": winter_alt}
+    else:
+        res_y1 = {"year": 1, "pv": current_crop, "oi": res_oi_1}
+        res_y2 = {"year": 2, "pv": res_pv_1, "oi": winter_alt}
+        res_y3 = {"year": 3, "pv": res_pv_2, "oi": res_oi_1}
+
+    plan_resiliencia = {
+        "plan_id": "plan_resiliencia",
+        "plan_name": "Resiliencia Climática Extremos",
+        "strategy_focus": (
+            f"Año 1 con {crop_label} y transición hacia variedades nativas o de raíz profunda con máxima tolerancia a sequía y heladas"
+        ),
+        "years": [res_y1, res_y2, res_y3],
+    }
+
+    # 5. Diversificación Equilibrada / Forrajero-Comercial
+    div_pv_1 = p["div_forage_pv"] if p["div_forage_pv"] != current_crop else p["div_commercial_pv"]
+    div_pv_2 = p["div_commercial_pv"] if p["div_commercial_pv"] != div_pv_1 else legume_pv_alt
+    div_oi_1 = p["div_oi_1"] if p["div_oi_1"] != current_crop else p["div_oi_2"]
+    div_oi_2 = p["div_oi_2"] if p["div_oi_2"] != current_crop else winter_alt
+    if ciclo_norm == "Todo_el_ano":
+        div_y1 = {"year": 1, "pv": current_crop, "oi": current_crop}
+        div_y2 = {"year": 2, "pv": div_pv_1, "oi": div_oi_1}
+        div_y3 = {"year": 3, "pv": div_pv_2, "oi": div_oi_2}
+    elif ciclo_norm == "Otono-Invierno":
+        div_y1 = {"year": 1, "pv": div_pv_2, "oi": current_crop}
+        div_y2 = {"year": 2, "pv": div_pv_1, "oi": div_oi_1}
+        div_y3 = {"year": 3, "pv": div_pv_2, "oi": div_oi_2}
+    else:
+        div_y1 = {"year": 1, "pv": current_crop, "oi": div_oi_1}
+        div_y2 = {"year": 2, "pv": div_pv_1, "oi": div_oi_2}
+        div_y3 = {"year": 3, "pv": div_pv_2, "oi": div_oi_1}
+
+    plan_diversificacion = {
+        "plan_id": "plan_diversificacion",
+        "plan_name": "Diversificación Equilibrada (Forrajero-Comercial)",
+        "strategy_focus": (
+            f"Año 1 con {crop_label} y mezcla equilibrada en Años 2–3 entre ingreso comercial, forraje de calidad y control de erosión"
+        ),
+        "years": [div_y1, div_y2, div_y3],
+    }
+
+    return [
+        plan_actual,
+        plan_conservacion,
+        plan_regenerativo,
+        plan_rentabilidad,
+        plan_resiliencia,
+        plan_diversificacion,
+    ]
 
 
 def _evaluate_year(
@@ -1332,6 +1675,11 @@ def _evaluate_year(
         if is_perennial_orchard and not has_winter_cover:
             # Limpia mecánica/herbicida en callejones desnudos
             base_net_income_ha -= 1200.0
+        elif is_perennial_orchard and year_spec.get("alley_cash_crop"):
+            # Ingreso secundario de franja comercial/forrajera intercalada en callejones (~15% de superficie útil)
+            base_net_income_ha += 0.15 * max(0.0, float(oi_crop["ingreso_neto_ha_mxn"]))
+            if alley_pv_crop is not None:
+                base_net_income_ha += 0.15 * max(0.0, float(alley_pv_crop["ingreso_neto_ha_mxn"]))
     else:
         base_net_income_ha = float(pv_crop["ingreso_neto_ha_mxn"]) + float(oi_crop["ingreso_neto_ha_mxn"])
 
@@ -1631,7 +1979,7 @@ CONCERN_LABELS = {
 }
 
 
-def simulate_scenarios(
+def _prepare_simulation_context(
     location_id: str,
     hectares: float = 10.0,
     weight_water: float = 0.33,
@@ -1649,11 +1997,7 @@ def simulate_scenarios(
     tillage_mode: str = "convencional",
     main_concern: str | list[str] = "sequia",
 ) -> dict[str, Any]:
-    """
-    Ejecuta el motor de simulación "What-If" de Kultiva a 3 años (6 ciclos)
-    para la parcela y el cultivo/familia seleccionados contra el catálogo oficial de 168 variedades,
-    aceptando calibración manual de suelo y prácticas de fertilización / manejo de rastrojo.
-    """
+    """Normaliza entradas, carga catálogos y calcula contexto edáfico/climático de la parcela."""
     climatology, cultivos, suelos = _load_datasets()
 
     if location_id not in climatology["locations"] or location_id not in suelos:
@@ -1663,10 +2007,10 @@ def simulate_scenarios(
     hectares = max(0.1, float(hectares))
     rain_reduction_pct = min(max(0.0, float(rain_reduction_pct)), 0.80)
     temp_increase_c = min(max(0.0, float(temp_increase_c)), 3.0)
-    irrigation_mode = str(irrigation_mode).strip().lower()
+    irrigation_mode = str(irrigation_mode or "temporal").strip().lower()
     if irrigation_mode not in {"temporal", "riego"}:
         irrigation_mode = "temporal"
-    market_goal = str(market_goal).strip().lower()
+    market_goal = str(market_goal or "grano").strip().lower()
     if market_goal not in {"grano", "forraje"}:
         market_goal = "grano"
     fertilizer_type = str(fertilizer_type or "quimico").strip().lower()
@@ -1675,7 +2019,10 @@ def simulate_scenarios(
     tillage_mode = str(tillage_mode or "convencional").strip().lower()
     if tillage_mode not in TILLAGE_LABELS:
         tillage_mode = "convencional"
-    raw_concerns = main_concern if isinstance(main_concern, (list, tuple, set)) else str(main_concern or "sequia").split(",")
+
+    raw_concerns = (
+        main_concern if isinstance(main_concern, (list, tuple, set)) else str(main_concern or "sequia").split(",")
+    )
     concerns: list[str] = []
     for item in raw_concerns:
         key = str(item or "").strip().lower()
@@ -1700,272 +2047,389 @@ def simulate_scenarios(
         custom_crop_name=custom_crop_name,
         custom_crop_water_tier=custom_crop_water_tier,
     )
-    current_crop_info = cultivos[resolved_crop_id]
 
     w_water, w_profit, w_nitrogen = _normalize_weights(weight_water, weight_profit, weight_nitrogen)
     w_water_adj = w_water + (0.18 if "sequia" in concerns else 0.0)
     w_nitrogen_adj = w_nitrogen + (0.18 if "suelo" in concerns else 0.0)
     w_water, w_profit, w_nitrogen = _normalize_weights(w_water_adj, w_profit, w_nitrogen_adj)
 
-    templates = _build_rotation_templates(
-        location_id=location_id,
-        current_crop=resolved_crop_id,
-        cultivos=cultivos,
-        soil=soil,
-        market_goal=market_goal,
+    return {
+        "location_id": location_id,
+        "hectares": hectares,
+        "rain_reduction_pct": rain_reduction_pct,
+        "temp_increase_c": temp_increase_c,
+        "irrigation_mode": irrigation_mode,
+        "market_goal": market_goal,
+        "fertilizer_type": fertilizer_type,
+        "tillage_mode": tillage_mode,
+        "concerns": concerns,
+        "cultivos": cultivos,
+        "soil": soil,
+        "is_custom_soil": is_custom_soil,
+        "base_elevation_m": base_elevation_m,
+        "climate": climate,
+        "requested_crop": requested_crop,
+        "resolved_crop_id": resolved_crop_id,
+        "selection_mode": selection_mode,
+        "current_crop_info": cultivos[resolved_crop_id],
+        "w_water": w_water,
+        "w_profit": w_profit,
+        "w_nitrogen": w_nitrogen,
+    }
+
+
+def _evaluate_template_years(
+    tpl: dict[str, Any],
+    ctx: dict[str, Any],
+    force_baseline_penalties: bool | None = None,
+) -> dict[str, Any]:
+    """Evalúa un esquema de 3 años usando el motor biofísico/económico de Kultiva."""
+    yearly_results: list[dict[str, Any]] = []
+    prev_main_crop: str | None = None
+    consec_mono = 0
+    cum_n_cycles = 0
+    is_baseline_plan = (
+        force_baseline_penalties if force_baseline_penalties is not None else (tpl["plan_id"] == "plan_actual")
     )
-    evaluated_plans: list[dict[str, Any]] = []
 
-    for tpl in templates:
-        yearly_results: list[dict[str, Any]] = []
-        prev_main_crop: str | None = None
-        consec_mono = 0
-        cum_n_cycles = 0
-        is_baseline_plan = tpl["plan_id"] == "plan_actual"
+    for y_spec in tpl["years"]:
+        main_crop = y_spec["pv"] if y_spec["pv"] != "Barbecho_Suelo_Desnudo" else y_spec["oi"]
+        is_intercropped_year = bool(y_spec.get("intercropped", False))
+        if is_intercropped_year and not is_baseline_plan:
+            consec_mono = 0
+        elif "consec_override" in y_spec:
+            consec_mono = int(y_spec["consec_override"])
+        elif prev_main_crop is not None and main_crop == prev_main_crop:
+            consec_mono += 1
+        else:
+            consec_mono = 0
 
-        for y_spec in tpl["years"]:
-            main_crop = y_spec["pv"] if y_spec["pv"] != "Barbecho_Suelo_Desnudo" else y_spec["oi"]
-            is_intercropped_year = bool(y_spec.get("intercropped", False))
-            if is_intercropped_year and not is_baseline_plan:
-                # La cobertura intercalada en callejones rompe el monocultivo desnudo
-                consec_mono = 0
-            elif prev_main_crop is not None and main_crop == prev_main_crop:
-                consec_mono += 1
-            else:
-                consec_mono = 0
-
-            y_eval = _evaluate_year(
-                year_spec=y_spec,
-                prev_pv_crop=prev_main_crop,
-                consecutive_monoculture_years=consec_mono,
-                cumulative_n_fixed_cycles=cum_n_cycles,
-                cultivos=cultivos,
-                soil=soil,
-                climate=climate,
-                rain_reduction_pct=rain_reduction_pct,
-                temp_increase_c=temp_increase_c,
-                irrigation_mode=irrigation_mode,
-                base_elevation_m=base_elevation_m,
-                is_custom_soil=is_custom_soil,
-                fertilizer_type=fertilizer_type,
-                tillage_mode=tillage_mode,
-                is_baseline_plan=is_baseline_plan,
-            )
-            yearly_results.append(y_eval)
-            prev_main_crop = main_crop
-            cum_n_cycles += y_eval["n_fixing_cycles"]
-
-        total_eff_water_mm = sum(y["effective_water_demand_mm"] for y in yearly_results)
-        total_cat_water_mm = sum(y["catalog_water_mm"] for y in yearly_results)
-        total_net_income_ha = sum(y["adjusted_net_income_ha_mxn"] for y in yearly_results)
-        total_net_income_mxn = total_net_income_ha * hectares
-        total_n_savings_ha = sum(y["nitrogen_fertilizer_savings_ha_mxn"] for y in yearly_results)
-        total_n_savings_mxn = total_n_savings_ha * hectares
-
-        drought_overall = _aggregate_light([y["drought_light"] for y in yearly_results])
-        frost_overall = _aggregate_light([y["frost_light"] for y in yearly_results])
-        pest_overall = _aggregate_light([y["pest_light"] for y in yearly_results])
-
-        months_protected = sum(y["months_soil_covered"] for y in yearly_results)
-        months_bare = sum(y["months_bare_soil"] for y in yearly_results)
-        total_n_cycles = sum(y["n_fixing_cycles"] for y in yearly_results)
-
-        evaluated_plans.append(
-            {
-                "plan_id": tpl["plan_id"],
-                "plan_name": tpl["plan_name"],
-                "strategy_focus": tpl["strategy_focus"],
-                "semaforo_sequia": drought_overall,
-                "semaforo_heladas": frost_overall,
-                "semaforo_plagas": pest_overall,
-                "demanda_agua_efectiva_3a_mm": round(total_eff_water_mm, 1),
-                "consumo_agua_catalogo_3a_mm": round(total_cat_water_mm, 1),
-                "ingreso_neto_ha_3a_mxn": round(total_net_income_ha, 2),
-                "ingreso_neto_total_mxn": round(total_net_income_mxn, 2),
-                "ahorro_fertilizante_n_ha_3a_mxn": round(total_n_savings_ha, 2),
-                "ahorro_fertilizante_n_total_mxn": round(total_n_savings_mxn, 2),
-                "ahorro_agua_m3": 0.0,
-                "consumo_agua_litros": 0,
-                "ahorro_agua_litros": 0,
-                "balance_nitrogeno_y_cobertura": {
-                    "meses_suelo_protegido_3a": months_protected,
-                    "meses_suelo_desnudo_3a": months_bare,
-                    "ciclos_fijacion_nitrogeno_3a": total_n_cycles,
-                    "meses_alerta_modis_parcela_3a": round(climate["bare_alert_expected_months_yr"] * 3.0, 1),
-                    "meses_alerta_modis_mitigados_3a": (
-                        round(climate["bare_alert_expected_months_yr"] * 3.0, 1) if months_bare == 0 else 0.0
-                    ),
-                },
-                "years": yearly_results,
-            }
+        y_eval = _evaluate_year(
+            year_spec=y_spec,
+            prev_pv_crop=prev_main_crop,
+            consecutive_monoculture_years=consec_mono,
+            cumulative_n_fixed_cycles=cum_n_cycles,
+            cultivos=ctx["cultivos"],
+            soil=ctx["soil"],
+            climate=ctx["climate"],
+            rain_reduction_pct=ctx["rain_reduction_pct"],
+            temp_increase_c=ctx["temp_increase_c"],
+            irrigation_mode=ctx["irrigation_mode"],
+            base_elevation_m=ctx["base_elevation_m"],
+            is_custom_soil=ctx["is_custom_soil"],
+            fertilizer_type=ctx["fertilizer_type"],
+            tillage_mode=ctx["tillage_mode"],
+            is_baseline_plan=is_baseline_plan,
         )
+        yearly_results.append(y_eval)
+        prev_main_crop = main_crop
+        cum_n_cycles += y_eval["n_fixing_cycles"]
 
-    baseline = evaluated_plans[0]
+    hectares = ctx["hectares"]
+    climate = ctx["climate"]
+    total_eff_water_mm = sum(y["effective_water_demand_mm"] for y in yearly_results)
+    total_cat_water_mm = sum(y["catalog_water_mm"] for y in yearly_results)
+    total_net_income_ha = sum(y["adjusted_net_income_ha_mxn"] for y in yearly_results)
+    total_net_income_mxn = total_net_income_ha * hectares
+    total_n_savings_ha = sum(y["nitrogen_fertilizer_savings_ha_mxn"] for y in yearly_results)
+    total_n_savings_mxn = total_n_savings_ha * hectares
+
+    drought_overall = _aggregate_light([y["drought_light"] for y in yearly_results])
+    frost_overall = _aggregate_light([y["frost_light"] for y in yearly_results])
+    pest_overall = _aggregate_light([y["pest_light"] for y in yearly_results])
+
+    months_protected = sum(y["months_soil_covered"] for y in yearly_results)
+    months_bare = sum(y["months_bare_soil"] for y in yearly_results)
+    total_n_cycles = sum(y["n_fixing_cycles"] for y in yearly_results)
+
+    return {
+        "plan_id": tpl["plan_id"],
+        "plan_name": tpl["plan_name"],
+        "strategy_focus": tpl["strategy_focus"],
+        "semaforo_sequia": drought_overall,
+        "semaforo_heladas": frost_overall,
+        "semaforo_plagas": pest_overall,
+        "demanda_agua_efectiva_3a_mm": round(total_eff_water_mm, 1),
+        "consumo_agua_catalogo_3a_mm": round(total_cat_water_mm, 1),
+        "ingreso_neto_ha_3a_mxn": round(total_net_income_ha, 2),
+        "ingreso_neto_total_mxn": round(total_net_income_mxn, 2),
+        "ahorro_fertilizante_n_ha_3a_mxn": round(total_n_savings_ha, 2),
+        "ahorro_fertilizante_n_total_mxn": round(total_n_savings_mxn, 2),
+        "ahorro_agua_m3": 0.0,
+        "consumo_agua_litros": 0,
+        "ahorro_agua_litros": 0,
+        "balance_nitrogeno_y_cobertura": {
+            "meses_suelo_protegido_3a": months_protected,
+            "meses_suelo_desnudo_3a": months_bare,
+            "ciclos_fijacion_nitrogeno_3a": total_n_cycles,
+            "meses_alerta_modis_parcela_3a": round(climate["bare_alert_expected_months_yr"] * 3.0, 1),
+            "meses_alerta_modis_mitigados_3a": (
+                round(climate["bare_alert_expected_months_yr"] * 3.0, 1) if months_bare == 0 else 0.0
+            ),
+        },
+        "years": yearly_results,
+    }
+
+
+def _score_plan_against_baseline(
+    plan: dict[str, Any],
+    baseline: dict[str, Any],
+    ctx: dict[str, Any],
+    profit_ref_3a: float,
+    extra_site_adj: float = 0.0,
+) -> dict[str, Any]:
+    """Calcula consumo/ahorro en m³ y L, subpuntajes (agua/rentabilidad/suelo) y `suitability_score`."""
+    hectares = ctx["hectares"]
+    soil = ctx["soil"]
+    cultivos = ctx["cultivos"]
+    is_custom_soil = ctx["is_custom_soil"]
+    tillage_mode = ctx["tillage_mode"]
+    market_goal = ctx["market_goal"]
+    concerns = ctx["concerns"]
+
     baseline_water_mm = baseline["demanda_agua_efectiva_3a_mm"]
     baseline_water_m3 = round(baseline_water_mm * 10.0 * hectares, 1)
 
+    water_saved_mm = baseline_water_mm - plan["demanda_agua_efectiva_3a_mm"]
+    plan_water_m3 = round(plan["demanda_agua_efectiva_3a_mm"] * 10.0 * hectares, 1)
+    plan["consumo_agua_total_3a_m3"] = plan_water_m3
+    plan["ahorro_agua_m3"] = round(water_saved_mm * 10.0 * hectares, 1)
+    plan["consumo_agua_litros"] = int(round(plan_water_m3 * 1000.0))
+    plan["ahorro_agua_litros"] = int(round((baseline_water_m3 - plan_water_m3) * 1000.0))
+
+    avg_drought_stress = sum(y["drought_stress_index"] for y in plan["years"]) / 3.0
+    light_water_bonus = {"VERDE": 14.0, "AMARILLO": 0.0, "ROJO": -18.0}[plan["semaforo_sequia"]]
+    water_savings_bonus = min(28.0, max(-10.0, (water_saved_mm / 650.0) * 28.0))
+    water_score = max(
+        5.0,
+        min(100.0, 100.0 - max(0.0, avg_drought_stress - 55.0) * 1.05 + water_savings_bonus + light_water_bonus),
+    )
+
+    profit_raw = (plan["ingreso_neto_ha_3a_mxn"] / max(1.0, profit_ref_3a)) * 100.0
+    pest_frost_penalty = (
+        (8.0 if plan["semaforo_plagas"] == "ROJO" else 3.0 if plan["semaforo_plagas"] == "AMARILLO" else 0.0)
+        + (8.0 if plan["semaforo_heladas"] == "ROJO" else 3.0 if plan["semaforo_heladas"] == "AMARILLO" else 0.0)
+    )
+    profit_score = max(5.0, min(100.0, profit_raw - pest_frost_penalty))
+
+    n_cycles = plan["balance_nitrogeno_y_cobertura"]["ciclos_fijacion_nitrogeno_3a"]
+    months_bare = plan["balance_nitrogeno_y_cobertura"]["meses_suelo_desnudo_3a"]
+    cover_ratio = plan["balance_nitrogeno_y_cobertura"]["meses_suelo_protegido_3a"] / 36.0
+    n_bonus = min(52.0, n_cycles * 24.0)
+    cover_bonus = cover_ratio * 42.0
+    soil_need_bonus = 6.0 if (n_cycles >= 2 and int(soil["needs_nitrogen_fixation"]) == 1) else 0.0
+
+    soil_urgency_adj = 0.0
+    if is_custom_soil:
+        mo_val = float(soil["materia_organica_pct"])
+        slope_val = float(soil["pendiente_pct"])
+        e_risk_val = int(soil["erosion_risk_score"])
+        if mo_val < 1.5:
+            mo_deficit = 1.5 - mo_val
+            if n_cycles >= 2:
+                soil_need_bonus += mo_deficit * 14.0
+                soil_urgency_adj += mo_deficit * 8.5
+            elif n_cycles == 1:
+                soil_need_bonus += mo_deficit * 5.0
+            else:
+                soil_need_bonus -= mo_deficit * 12.0
+                soil_urgency_adj -= mo_deficit * 6.0
+
+        if slope_val >= 5.0 or e_risk_val >= 3:
+            slope_excess = max(0.0, slope_val - 4.0)
+            erosion_factor = 3.0 + slope_excess * 1.1 + (2.5 if e_risk_val >= 3 else 0.0)
+            if months_bare == 0:
+                soil_need_bonus += erosion_factor
+                soil_urgency_adj += erosion_factor * (1.15 if plan["plan_id"] == "plan_regenerativo" else 0.75)
+            else:
+                soil_need_bonus -= erosion_factor * 1.5
+                soil_urgency_adj -= erosion_factor * 1.2
+
+    if tillage_mode == "convencional" and int(soil["erosion_risk_score"]) >= 3:
+        if months_bare == 0:
+            soil_need_bonus += 3.5
+        else:
+            soil_need_bonus -= 5.0
+
+    nitrogen_score = max(5.0, min(100.0, n_bonus + cover_bonus + soil_need_bonus))
+
+    active_crops = [y["pv_crop_id"] for y in plan["years"] if y["pv_crop_id"] != "Barbecho_Suelo_Desnudo"] + [
+        y["oi_crop_id"] for y in plan["years"] if y["oi_crop_id"] != "Barbecho_Suelo_Desnudo"
+    ]
+    if market_goal == "forraje":
+        forage_ratio = sum(1 for c in active_crops if _is_forage_crop(cultivos[c])) / max(1, len(active_crops))
+        market_alignment_bonus = (forage_ratio - 0.35) * 12.0
+    else:
+        grain_count = sum(1 for c in active_crops if _is_grain_or_commercial_crop(cultivos[c]))
+        market_alignment_bonus = 2.0 if grain_count >= 2 else 0.0
+
+    pid = plan["plan_id"]
+    concern_alignment_bonus = 0.0
+    for c in concerns:
+        if c == "sequia":
+            if pid in {"plan_conservacion", "plan_conservacion_hidrica"}:
+                concern_alignment_bonus += 4.2
+            elif pid == "plan_resiliencia":
+                concern_alignment_bonus += 3.0
+            elif pid == "plan_regenerativo":
+                concern_alignment_bonus += 1.8
+            elif pid == "plan_actual":
+                concern_alignment_bonus -= 3.0
+        elif c == "suelo":
+            if pid == "plan_regenerativo":
+                concern_alignment_bonus += 4.8
+            elif pid == "plan_resiliencia":
+                concern_alignment_bonus += 2.4
+            elif pid in {"plan_conservacion", "plan_conservacion_hidrica"}:
+                concern_alignment_bonus += 2.0
+            elif pid == "plan_actual":
+                concern_alignment_bonus -= 3.5
+        elif c == "plagas":
+            if plan["semaforo_plagas"] == "VERDE":
+                concern_alignment_bonus += 3.8 if pid == "plan_regenerativo" else 3.2
+            elif plan["semaforo_plagas"] == "ROJO":
+                concern_alignment_bonus -= 4.0
+        elif c == "heladas":
+            if plan["semaforo_heladas"] == "VERDE" and months_bare == 0:
+                concern_alignment_bonus += 3.8 if pid != "plan_resiliencia" else 4.5
+            elif months_bare == 0:
+                concern_alignment_bonus += 2.0
+            else:
+                concern_alignment_bonus -= 3.0
+    if len(concerns) > 1:
+        concern_alignment_bonus *= 0.75
+
+    suitability = max(
+        5.0,
+        min(
+            100.0,
+            ctx["w_water"] * water_score
+            + ctx["w_profit"] * profit_score
+            + ctx["w_nitrogen"] * nitrogen_score
+            + market_alignment_bonus
+            + soil_urgency_adj
+            + concern_alignment_bonus
+            + extra_site_adj,
+        ),
+    )
+    plan["component_scores"] = {
+        "water_score": round(water_score, 1),
+        "profit_score": round(profit_score, 1),
+        "nitrogen_soil_score": round(nitrogen_score, 1),
+    }
+    plan["suitability_score"] = round(suitability, 2)
+    return plan
+
+
+def simulate_scenarios(
+    location_id: str,
+    hectares: float = 10.0,
+    weight_water: float = 0.33,
+    weight_profit: float = 0.33,
+    weight_nitrogen: float = 0.34,
+    rain_reduction_pct: float = 0.0,
+    temp_increase_c: float = 0.0,
+    irrigation_mode: str = "temporal",
+    market_goal: str = "grano",
+    current_crop: str = "Maiz_Grano",
+    custom_crop_name: str | None = None,
+    custom_crop_water_tier: str = "medio",
+    soil_override: dict[str, Any] | None = None,
+    fertilizer_type: str = "quimico",
+    tillage_mode: str = "convencional",
+    main_concern: str | list[str] = "sequia",
+) -> dict[str, Any]:
+    """
+    Ejecuta el motor de simulación "What-If" de Kultiva a 3 años (6 ciclos)
+    devolviendo `plan_actual` (línea base) + los 5 planes alternativos rankeados (`#1` a `#5`).
+    """
+    ctx = _prepare_simulation_context(
+        location_id=location_id,
+        hectares=hectares,
+        weight_water=weight_water,
+        weight_profit=weight_profit,
+        weight_nitrogen=weight_nitrogen,
+        rain_reduction_pct=rain_reduction_pct,
+        temp_increase_c=temp_increase_c,
+        irrigation_mode=irrigation_mode,
+        market_goal=market_goal,
+        current_crop=current_crop,
+        custom_crop_name=custom_crop_name,
+        custom_crop_water_tier=custom_crop_water_tier,
+        soil_override=soil_override,
+        fertilizer_type=fertilizer_type,
+        tillage_mode=tillage_mode,
+        main_concern=main_concern,
+    )
+
+    templates = _build_rotation_templates(
+        location_id=ctx["location_id"],
+        current_crop=ctx["resolved_crop_id"],
+        cultivos=ctx["cultivos"],
+        soil=ctx["soil"],
+        irrigation_mode=ctx["irrigation_mode"],
+        market_goal=ctx["market_goal"],
+        concerns=ctx["concerns"],
+    )
+    evaluated_plans = [_evaluate_template_years(tpl, ctx) for tpl in templates]
+
+    baseline = evaluated_plans[0]
     max_net_ha_3a = max(p["ingreso_neto_ha_3a_mxn"] for p in evaluated_plans)
     profit_ref_3a = max(92000.0, max_net_ha_3a * 1.08)
 
+    current_crop_info = ctx["current_crop_info"]
     for plan in evaluated_plans:
-        water_saved_mm = baseline_water_mm - plan["demanda_agua_efectiva_3a_mm"]
-        plan_water_m3 = round(plan["demanda_agua_efectiva_3a_mm"] * 10.0 * hectares, 1)
-        plan["consumo_agua_total_3a_m3"] = plan_water_m3
-        plan["ahorro_agua_m3"] = round(water_saved_mm * 10.0 * hectares, 1)
-        plan["consumo_agua_litros"] = int(round(plan_water_m3 * 1000.0))
-        plan["ahorro_agua_litros"] = int(round((baseline_water_m3 - plan_water_m3) * 1000.0))
-
-        avg_drought_stress = sum(y["drought_stress_index"] for y in plan["years"]) / 3.0
-        light_water_bonus = {"VERDE": 14.0, "AMARILLO": 0.0, "ROJO": -18.0}[plan["semaforo_sequia"]]
-        water_savings_bonus = min(28.0, max(-10.0, (water_saved_mm / 650.0) * 28.0))
-        water_score = max(
-            5.0,
-            min(100.0, 100.0 - max(0.0, avg_drought_stress - 55.0) * 1.05 + water_savings_bonus + light_water_bonus),
-        )
-
-        profit_raw = (plan["ingreso_neto_ha_3a_mxn"] / profit_ref_3a) * 100.0
-        pest_frost_penalty = (
-            (8.0 if plan["semaforo_plagas"] == "ROJO" else 3.0 if plan["semaforo_plagas"] == "AMARILLO" else 0.0)
-            + (8.0 if plan["semaforo_heladas"] == "ROJO" else 3.0 if plan["semaforo_heladas"] == "AMARILLO" else 0.0)
-        )
-        profit_score = max(5.0, min(100.0, profit_raw - pest_frost_penalty))
-
-        n_cycles = plan["balance_nitrogeno_y_cobertura"]["ciclos_fijacion_nitrogeno_3a"]
-        months_bare = plan["balance_nitrogeno_y_cobertura"]["meses_suelo_desnudo_3a"]
-        cover_ratio = plan["balance_nitrogeno_y_cobertura"]["meses_suelo_protegido_3a"] / 36.0
-        n_bonus = min(52.0, n_cycles * 24.0)
-        cover_bonus = cover_ratio * 42.0
-        soil_need_bonus = 6.0 if (n_cycles >= 2 and int(soil["needs_nitrogen_fixation"]) == 1) else 0.0
-
-        soil_urgency_adj = 0.0
-        if is_custom_soil:
-            mo_val = float(soil["materia_organica_pct"])
-            slope_val = float(soil["pendiente_pct"])
-            e_risk_val = int(soil["erosion_risk_score"])
-            if mo_val < 1.5:
-                mo_deficit = 1.5 - mo_val
-                if n_cycles >= 2:
-                    soil_need_bonus += mo_deficit * 14.0
-                    soil_urgency_adj += mo_deficit * 8.5
-                elif n_cycles == 1:
-                    soil_need_bonus += mo_deficit * 5.0
-                else:
-                    soil_need_bonus -= mo_deficit * 12.0
-                    soil_urgency_adj -= mo_deficit * 6.0
-
-            if slope_val >= 5.0 or e_risk_val >= 3:
-                slope_excess = max(0.0, slope_val - 4.0)
-                erosion_factor = 3.0 + slope_excess * 1.1 + (2.5 if e_risk_val >= 3 else 0.0)
-                if months_bare == 0:
-                    soil_need_bonus += erosion_factor
-                    soil_urgency_adj += erosion_factor * (1.15 if plan["plan_id"] == "plan_regenerativo" else 0.75)
-                else:
-                    soil_need_bonus -= erosion_factor * 1.5
-                    soil_urgency_adj -= erosion_factor * 1.2
-
-        if tillage_mode == "convencional" and int(soil["erosion_risk_score"]) >= 3:
-            if months_bare == 0:
-                soil_need_bonus += 3.5
-            else:
-                soil_need_bonus -= 5.0
-
-        nitrogen_score = max(5.0, min(100.0, n_bonus + cover_bonus + soil_need_bonus))
-
-        active_crops = [y["pv_crop_id"] for y in plan["years"] if y["pv_crop_id"] != "Barbecho_Suelo_Desnudo"] + [
-            y["oi_crop_id"] for y in plan["years"] if y["oi_crop_id"] != "Barbecho_Suelo_Desnudo"
-        ]
-        if market_goal == "forraje":
-            forage_ratio = sum(1 for c in active_crops if _is_forage_crop(cultivos[c])) / max(1, len(active_crops))
-            market_alignment_bonus = (forage_ratio - 0.35) * 12.0
-        else:
-            grain_count = sum(1 for c in active_crops if _is_grain_or_commercial_crop(cultivos[c]))
-            market_alignment_bonus = 2.0 if grain_count >= 2 else 0.0
-
-        concern_alignment_bonus = 0.0
-        for c in concerns:
-            if c == "sequia":
-                if plan["plan_id"] == "plan_conservacion_hidrica":
-                    concern_alignment_bonus += 4.2
-                elif plan["plan_id"] == "plan_regenerativo":
-                    concern_alignment_bonus += 1.8
-                else:
-                    concern_alignment_bonus -= 3.0
-            elif c == "suelo":
-                if plan["plan_id"] == "plan_regenerativo":
-                    concern_alignment_bonus += 4.8
-                elif plan["plan_id"] == "plan_conservacion_hidrica":
-                    concern_alignment_bonus += 2.0
-                else:
-                    concern_alignment_bonus -= 3.5
-            elif c == "plagas":
-                if plan["semaforo_plagas"] == "VERDE":
-                    concern_alignment_bonus += 3.8 if plan["plan_id"] == "plan_regenerativo" else 3.2
-                elif plan["semaforo_plagas"] == "ROJO":
-                    concern_alignment_bonus -= 4.0
-            elif c == "heladas":
-                if plan["semaforo_heladas"] == "VERDE" and months_bare == 0:
-                    concern_alignment_bonus += 3.8
-                elif months_bare == 0:
-                    concern_alignment_bonus += 2.0
-                else:
-                    concern_alignment_bonus -= 3.0
-        if len(concerns) > 1:
-            concern_alignment_bonus *= 0.75
-
-        suitability = max(
-            5.0,
-            min(
-                100.0,
-                w_water * water_score
-                + w_profit * profit_score
-                + w_nitrogen * nitrogen_score
-                + market_alignment_bonus
-                + soil_urgency_adj
-                + concern_alignment_bonus,
-            ),
-        )
-        plan["component_scores"] = {
-            "water_score": round(water_score, 1),
-            "profit_score": round(profit_score, 1),
-            "nitrogen_soil_score": round(nitrogen_score, 1),
-        }
-        plan["suitability_score"] = round(suitability, 2)
+        _score_plan_against_baseline(plan, baseline, ctx, profit_ref_3a)
         plan["nasa_evidence_summary"] = _build_nasa_evidence_summary(
             plan_id=plan["plan_id"],
             plan_name=plan["plan_name"],
             current_crop_info=current_crop_info,
-            soil=soil,
-            climate=climate,
-            rain_reduction_pct=rain_reduction_pct,
-            temp_increase_c=temp_increase_c,
-            hectares=hectares,
+            soil=ctx["soil"],
+            climate=ctx["climate"],
+            rain_reduction_pct=ctx["rain_reduction_pct"],
+            temp_increase_c=ctx["temp_increase_c"],
+            hectares=ctx["hectares"],
             plan_metrics=plan,
             baseline_metrics=baseline,
-            is_custom_soil=is_custom_soil,
-            fertilizer_type=fertilizer_type,
+            is_custom_soil=ctx["is_custom_soil"],
+            fertilizer_type=ctx["fertilizer_type"],
         )
         plan["local_validation_notes"] = _build_local_validation_notes(
             plan_metrics=plan,
-            soil=soil,
-            irrigation_mode=irrigation_mode,
-            market_goal=market_goal,
+            soil=ctx["soil"],
+            irrigation_mode=ctx["irrigation_mode"],
+            market_goal=ctx["market_goal"],
             current_crop_info=current_crop_info,
         )
 
-    ranked = sorted(evaluated_plans, key=lambda p: p["suitability_score"], reverse=True)
-    recommended = ranked[0]
+    baseline["rank"] = None
+    alternatives = [p for p in evaluated_plans if p["plan_id"] != "plan_actual"]
+    ranked_alternatives = sorted(
+        alternatives,
+        key=lambda p: (p["suitability_score"], p["ahorro_agua_m3"], p["ingreso_neto_total_mxn"]),
+        reverse=True,
+    )
+    for idx, alt_plan in enumerate(ranked_alternatives, start=1):
+        alt_plan["rank"] = idx
+
+    recommended = ranked_alternatives[0]
+    ordered_plans = [baseline] + ranked_alternatives
+
+    soil = ctx["soil"]
+    climate = ctx["climate"]
+    concerns = ctx["concerns"]
 
     return {
-        "location_id": location_id,
+        "location_id": ctx["location_id"],
         "zona_label": soil["zona_label"],
         "municipio": soil["municipio"],
-        "hectares": hectares,
-        "requested_crop": requested_crop,
-        "selection_mode": selection_mode,
-        "current_crop": resolved_crop_id,
+        "hectares": ctx["hectares"],
+        "requested_crop": ctx["requested_crop"],
+        "selection_mode": ctx["selection_mode"],
+        "current_crop": ctx["resolved_crop_id"],
         "current_crop_label": current_crop_info["cultivo_label"],
         "current_crop_cycle_label": current_crop_info["ciclo_label"],
-        # Metadatos oficiales de la variedad resuelta (PASO 3.5)
+        # Metadatos oficiales de la variedad resuelta
         "cultivo": current_crop_info["cultivo"],
         "familia_cultivo": current_crop_info["familia_cultivo"],
         "nombre_comun": current_crop_info["nombre_comun"],
@@ -1976,25 +2440,25 @@ def simulate_scenarios(
         "fuente_oficial": current_crop_info["fuente_oficial"],
         "modo_en_kultiva": current_crop_info.get("modo_en_kultiva", "Rotacion_Ciclica"),
         "beneficio_principal": current_crop_info.get("beneficio_principal", ""),
-        "rain_reduction_pct": rain_reduction_pct,
-        "temp_increase_c": temp_increase_c,
-        "irrigation_mode": irrigation_mode,
-        "market_goal": market_goal,
-        "fertilizer_type": fertilizer_type,
-        "fertilizer_label": FERTILIZER_LABELS[fertilizer_type],
-        "tillage_mode": tillage_mode,
-        "tillage_label": TILLAGE_LABELS[tillage_mode],
+        "rain_reduction_pct": ctx["rain_reduction_pct"],
+        "temp_increase_c": ctx["temp_increase_c"],
+        "irrigation_mode": ctx["irrigation_mode"],
+        "market_goal": ctx["market_goal"],
+        "fertilizer_type": ctx["fertilizer_type"],
+        "fertilizer_label": FERTILIZER_LABELS[ctx["fertilizer_type"]],
+        "tillage_mode": ctx["tillage_mode"],
+        "tillage_label": TILLAGE_LABELS[ctx["tillage_mode"]],
         "main_concern": concerns[0] if len(concerns) == 1 else concerns,
         "main_concerns": concerns,
         "main_concern_label": " · ".join(CONCERN_LABELS[c] for c in concerns),
-        "is_custom_soil": is_custom_soil,
+        "is_custom_soil": ctx["is_custom_soil"],
         "normalized_weights": {
-            "weight_water": round(w_water, 4),
-            "weight_profit": round(w_profit, 4),
-            "weight_nitrogen": round(w_nitrogen, 4),
+            "weight_water": round(ctx["w_water"], 4),
+            "weight_profit": round(ctx["w_profit"], 4),
+            "weight_nitrogen": round(ctx["w_nitrogen"], 4),
         },
         "parcel_context": {
-            "is_custom_soil": is_custom_soil,
+            "is_custom_soil": ctx["is_custom_soil"],
             "tipo_suelo_label": soil["tipo_suelo_label"],
             "textura_label": soil["textura_label"],
             "retencion_agua": soil["retencion_agua"],
@@ -2005,10 +2469,10 @@ def simulate_scenarios(
             "water_retention_score": soil["water_retention_score"],
             "erosion_risk_score": soil["erosion_risk_score"],
             "problema_principal": soil["problema_principal"],
-            "fertilizer_type": fertilizer_type,
-            "fertilizer_label": FERTILIZER_LABELS[fertilizer_type],
-            "tillage_mode": tillage_mode,
-            "tillage_label": TILLAGE_LABELS[tillage_mode],
+            "fertilizer_type": ctx["fertilizer_type"],
+            "fertilizer_label": FERTILIZER_LABELS[ctx["fertilizer_type"]],
+            "tillage_mode": ctx["tillage_mode"],
+            "tillage_label": TILLAGE_LABELS[ctx["tillage_mode"]],
             "main_concern": concerns[0] if len(concerns) == 1 else concerns,
             "main_concerns": concerns,
             "main_concern_label": " · ".join(CONCERN_LABELS[c] for c in concerns),
@@ -2021,5 +2485,306 @@ def simulate_scenarios(
         "recommended_plan_id": recommended["plan_id"],
         "recommended_plan_name": recommended["plan_name"],
         "recommended_suitability_score": recommended["suitability_score"],
-        "plans": evaluated_plans,
+        "plans": ordered_plans,
     }
+
+
+def _evaluate_candidate_viability_for_168(
+    crop: dict[str, Any],
+    ctx: dict[str, Any],
+) -> tuple[float, str]:
+    """Evalúa compatibilidad biofísica/hídrica real de cada una de las 168 variedades en la parcela."""
+    soil = ctx["soil"]
+    location_id = ctx["location_id"]
+    elev_m = float(soil.get("local_elevation_m", 1700.0))
+    is_high_alt = elev_m >= 2000.0 or location_id == "Los_Lirios_Arteaga"
+    irrigation_mode = ctx["irrigation_mode"]
+
+    munis_text = _strip_accents(crop.get("municipios_coahuila", ""))
+    benefit_text = _strip_accents(crop.get("beneficio_principal", ""))
+    modal_text = _strip_accents(crop.get("modalidad_hidrica_tipica", ""))
+    geo_text = f"{munis_text} {benefit_text}"
+
+    preferred_tokens, _ = _site_location_tokens(location_id, soil)
+    muni_match = any(tok in munis_text for tok in preferred_tokens[:2])
+
+    adj = 0.0
+    notes: list[str] = []
+
+    if muni_match:
+        adj += 5.5
+
+    # Compatibilidad hídrica (temporal vs riego/invernadero)
+    has_temporal = any(tok in modal_text for tok in ("temporal", "residual", "agostadero"))
+    has_auxilio = any(tok in modal_text for tok in ("auxilio", "deficitario", "acequia"))
+    is_protected_only = "invernadero" in modal_text and "campo" not in geo_text and "cielo abierto" not in _strip_accents(crop["nombre_comun"])
+    if irrigation_mode == "temporal":
+        if has_temporal:
+            if ">500 mm" in modal_text and ctx["climate"]["rain_adj_annual_mm"] < 420.0:
+                adj -= 12.0
+                notes.append("requiere temporal de sierra (>500 mm anuales)")
+            else:
+                adj += 5.0
+        elif has_auxilio:
+            adj -= 1.0
+        else:
+            adj -= 15.0
+            notes.append("requiere riego tecnificado o invernadero (restricción en temporal)")
+        if is_protected_only:
+            adj -= 8.0
+
+    # Compatibilidad térmica / altitud
+    temp_min = float(crop.get("temp_min_c", 8.0))
+    if is_high_alt:
+        if "no apto sierra" in geo_text or "sorgo" in crop["cultivo"].lower():
+            adj -= 22.0
+            notes.append("no recomendado en sierra alta (>=2,000 msnm) por frío nocturno")
+        elif temp_min >= 14.0 or float(crop.get("umbral_helada_c", 1.0)) >= 2.5:
+            adj -= 16.0
+            notes.append("alto riesgo de helada en zonas >=2,000 msnm")
+        elif "partes bajas" in munis_text and "los lirios" not in munis_text:
+            adj -= 6.0
+        elif int(crop.get("frost_tolerance_score", 2)) >= 3:
+            adj += 4.5
+    elif elev_m < 1700.0:
+        if (
+            ("sierra de arteaga" in geo_text or ">2,000 msnm" in geo_text or ">2,100 msnm" in geo_text or "temporal de sierra" in modal_text)
+            and not any(t in munis_text for t in ("saltillo", "parras", "general cepeda", "laguna"))
+        ):
+            adj -= 16.0
+            notes.append("requiere mayor altitud/horas frío que esta parcela")
+    else:  # 1700 <= elev_m < 2000 (valles medios como Saltillo / La Narro)
+        if "temporal de sierra (>500 mm)" in modal_text and ctx["climate"]["rain_adj_annual_mm"] < 420.0:
+            adj -= 8.0
+
+    # Suelo y preocupaciones
+    if int(soil.get("needs_erosion_cover", 0)) == 1 and int(crop.get("erosion_control_score", 2)) >= 3:
+        adj += 3.0
+    if int(soil.get("needs_nitrogen_fixation", 0)) == 1 and int(crop.get("fija_nitrogeno_bin", 0)) == 1:
+        adj += 3.5
+
+    return adj, ("; ".join(notes) if notes else "")
+
+
+def simulate_all_168_crops(
+    location_id: str,
+    hectares: float = 10.0,
+    weight_water: float = 0.33,
+    weight_profit: float = 0.33,
+    weight_nitrogen: float = 0.34,
+    rain_reduction_pct: float = 0.0,
+    temp_increase_c: float = 0.0,
+    irrigation_mode: str | None = None,
+    market_goal: str = "grano",
+    current_crop: str = "Maiz_Grano",
+    custom_crop_name: str | None = None,
+    custom_crop_water_tier: str = "medio",
+    soil_override: dict[str, Any] | None = None,
+    fertilizer_type: str | None = None,
+    tillage_mode: str | None = None,
+    main_concern: str | list[str] | None = None,
+    *,
+    irrigation: str | None = None,
+    fertilizer: str | None = None,
+    tillage: str | None = None,
+    concerns: str | list[str] | None = None,
+) -> list[dict[str, Any]]:
+    """
+    Evalúa de forma determinista cada una de las 168 variedades oficiales en la parcela actual
+    comparándolas contra la línea base del cultivo actual (`plan_actual`), y devuelve la tabla
+    rankeada de #1 a #168.
+    """
+    eff_irrigation = irrigation_mode if irrigation_mode is not None else (irrigation or "temporal")
+    eff_fertilizer = fertilizer_type if fertilizer_type is not None else (fertilizer or "quimico")
+    eff_tillage = tillage_mode if tillage_mode is not None else (tillage or "convencional")
+    eff_concern = main_concern if main_concern is not None else (concerns if concerns is not None else "sequia")
+
+    ctx = _prepare_simulation_context(
+        location_id=location_id,
+        hectares=hectares,
+        weight_water=weight_water,
+        weight_profit=weight_profit,
+        weight_nitrogen=weight_nitrogen,
+        rain_reduction_pct=rain_reduction_pct,
+        temp_increase_c=temp_increase_c,
+        irrigation_mode=eff_irrigation,
+        market_goal=market_goal,
+        current_crop=current_crop,
+        custom_crop_name=custom_crop_name,
+        custom_crop_water_tier=custom_crop_water_tier,
+        soil_override=soil_override,
+        fertilizer_type=eff_fertilizer,
+        tillage_mode=eff_tillage,
+        main_concern=eff_concern,
+    )
+
+    # 1. Calcular línea base real del usuario (plan_actual)
+    base_templates = _build_rotation_templates(
+        location_id=ctx["location_id"],
+        current_crop=ctx["resolved_crop_id"],
+        cultivos=ctx["cultivos"],
+        soil=ctx["soil"],
+        irrigation_mode=ctx["irrigation_mode"],
+        market_goal=ctx["market_goal"],
+        concerns=ctx["concerns"],
+    )
+    baseline = _evaluate_template_years(base_templates[0], ctx, force_baseline_penalties=True)
+    baseline_water_m3 = round(baseline["demanda_agua_efectiva_3a_mm"] * 10.0 * ctx["hectares"], 1)
+    baseline_net_mxn = baseline["ingreso_neto_total_mxn"]
+
+    # Cobertura invernal de referencia para frutales perennes en callejones
+    elev_m = float(ctx["soil"].get("local_elevation_m", 1700.0))
+    site_winter_cover = (
+        "Cebada_Forrajera_Precoz_Sierra_Fria"
+        if (ctx["location_id"] == "Los_Lirios_Arteaga" or elev_m >= 2000.0)
+        else "Avena_Negra_Strigosa_Cobertura_Rustica"
+    )
+
+    # 2. Evaluar cada una de las 168 variedades oficiales
+    official_varieties = [
+        v for k, v in ctx["cultivos"].items() if k not in {"Barbecho_Suelo_Desnudo", "__otro__"}
+    ]
+
+    prelim_evals: list[tuple[dict[str, Any], dict[str, Any], float, str]] = []
+    for v in official_varieties:
+        vid = v["cultivo"]
+        ciclo_norm = v.get("ciclo_norm") or v["ciclo_siembra"]
+        modo = v.get("modo_en_kultiva", "Rotacion_Ciclica")
+        is_same_baseline = vid == ctx["resolved_crop_id"]
+
+        if modo == "Cobertura_Intercalada_Perenne":
+            years_spec = [
+                {"year": 1, "pv": vid, "oi": site_winter_cover, "intercropped": True},
+                {"year": 2, "pv": vid, "oi": site_winter_cover, "intercropped": True},
+                {"year": 3, "pv": vid, "oi": site_winter_cover, "intercropped": True},
+            ]
+        elif ciclo_norm == "Todo_el_ano":
+            years_spec = [
+                {"year": 1, "pv": vid, "oi": vid, "consec_override": 0 if not is_same_baseline else 0},
+                {"year": 2, "pv": vid, "oi": vid, "consec_override": 0 if not is_same_baseline else 1},
+                {"year": 3, "pv": vid, "oi": vid, "consec_override": 1 if not is_same_baseline else 2},
+            ]
+        elif ciclo_norm == "Otono-Invierno":
+            years_spec = [
+                {"year": 1, "pv": "Barbecho_Suelo_Desnudo", "oi": vid, "consec_override": 0},
+                {"year": 2, "pv": "Barbecho_Suelo_Desnudo", "oi": vid, "consec_override": 0 if not is_same_baseline else 1},
+                {"year": 3, "pv": "Barbecho_Suelo_Desnudo", "oi": vid, "consec_override": 1 if not is_same_baseline else 2},
+            ]
+        else:
+            years_spec = [
+                {"year": 1, "pv": vid, "oi": "Barbecho_Suelo_Desnudo", "consec_override": 0},
+                {"year": 2, "pv": vid, "oi": "Barbecho_Suelo_Desnudo", "consec_override": 0 if not is_same_baseline else 1},
+                {"year": 3, "pv": vid, "oi": "Barbecho_Suelo_Desnudo", "consec_override": 1 if not is_same_baseline else 2},
+            ]
+
+        tpl = {
+            "plan_id": "plan_actual" if is_same_baseline else f"eval_{vid}",
+            "plan_name": v["nombre_comun"],
+            "strategy_focus": v.get("beneficio_principal", ""),
+            "years": years_spec,
+        }
+        ev = _evaluate_template_years(tpl, ctx, force_baseline_penalties=is_same_baseline)
+        viab_adj, viab_note = _evaluate_candidate_viability_for_168(v, ctx)
+        prelim_evals.append((v, ev, viab_adj, viab_note))
+
+    max_168_net_ha = max(ev["ingreso_neto_ha_3a_mxn"] for _, ev, _, _ in prelim_evals)
+    results: list[dict[str, Any]] = []
+
+    for v, ev, viab_adj, viab_note in prelim_evals:
+        # Calibración balanceada de rentabilidad comparativa entre granos/forrajes y hortofrutícolas
+        _score_plan_against_baseline(ev, baseline, ctx, profit_ref_3a=92000.0, extra_site_adj=viab_adj)
+        net_ha = ev["ingreso_neto_ha_3a_mxn"]
+        pest_frost_pen = (
+            (8.0 if ev["semaforo_plagas"] == "ROJO" else 3.0 if ev["semaforo_plagas"] == "AMARILLO" else 0.0)
+            + (8.0 if ev["semaforo_heladas"] == "ROJO" else 3.0 if ev["semaforo_heladas"] == "AMARILLO" else 0.0)
+        )
+        soft_profit = 0.50 * min(100.0, (net_ha / 92000.0) * 100.0) + 0.50 * (
+            (net_ha / max(92000.0, max_168_net_ha)) * 100.0
+        )
+        calibrated_profit_score = round(max(5.0, min(100.0, soft_profit - pest_frost_pen)), 1)
+        ev["component_scores"]["profit_score"] = calibrated_profit_score
+
+        # Recalcular suitability_score usando profit_score calibrado
+        w_sc = ev["component_scores"]["water_score"]
+        n_sc = ev["component_scores"]["nitrogen_soil_score"]
+        recomputed_suit = max(
+            5.0,
+            min(
+                100.0,
+                ctx["w_water"] * w_sc + ctx["w_profit"] * calibrated_profit_score + ctx["w_nitrogen"] * n_sc + viab_adj,
+            ),
+        )
+
+        # En zonas frías >=2000m con cultivos cálidos sensibles, reflejar riesgo térmico real
+        frost_light = ev["semaforo_heladas"]
+        if (elev_m >= 2000.0 or ctx["location_id"] == "Los_Lirios_Arteaga") and float(v.get("temp_min_c", 8.0)) >= 14.0:
+            frost_light = "ROJO"
+        drought_light = ev["semaforo_sequia"]
+        if ctx["irrigation_mode"] == "temporal" and "requiere riego" in viab_note and float(v["consumo_agua_mm"]) >= 500.0:
+            drought_light = "ROJO" if drought_light != "ROJO" else drought_light
+
+        agua_3a_m3 = ev["consumo_agua_total_3a_m3"]
+        ahorro_m3 = round(baseline_water_m3 - agua_3a_m3, 1)
+        ahorro_litros = int(round(ahorro_m3 * 1000.0))
+        utilidad_3a = ev["ingreso_neto_total_mxn"]
+        diff_dinero = round(utilidad_3a - baseline_net_mxn, 2)
+        ahorro_fert = ev["ahorro_fertilizante_n_total_mxn"]
+        meses_prot = int(ev["balance_nitrogeno_y_cobertura"]["meses_suelo_protegido_3a"])
+
+        agua_txt = (
+            f"ahorra {ahorro_m3:,.0f} m³ de agua"
+            if ahorro_m3 >= 0
+            else f"requiere {abs(ahorro_m3):,.0f} m³ adicionales"
+        )
+        dinero_txt = (
+            f"+${diff_dinero:,.0f} MXN vs. tu cultivo actual"
+            if diff_dinero >= 0
+            else f"-${abs(diff_dinero):,.0f} MXN vs. tu cultivo actual"
+        )
+        n_txt = " · fija nitrógeno en el suelo" if v["fija_nitrogeno"] == "Si" else ""
+        caution_txt = f" · Nota: {viab_note}" if viab_note else ""
+        resumen = (
+            f"En {ctx['soil']['zona_label']} ({ctx['hectares']:.1f} ha, {ctx['irrigation_mode']}), "
+            f"{agua_txt}, proyecta ${utilidad_3a:,.0f} MXN ({dinero_txt}), "
+            f"cubre el suelo {meses_prot}/36 meses{n_txt} con riesgo "
+            f"Sequía={drought_light}/Heladas={frost_light}/Plagas={ev['semaforo_plagas']}{caution_txt}."
+        )
+
+        results.append(
+            {
+                "ranking": 0,
+                "cultivo": v["cultivo"],
+                "nombre_comun": v["nombre_comun"],
+                "familia_cultivo": v["familia_cultivo"],
+                "categoria_siap": v["categoria_siap"],
+                "modo_en_kultiva": v["modo_en_kultiva"],
+                "clasificacion_oficial": v["clasificacion_oficial"],
+                "suitability_score": round(recomputed_suit, 2),
+                "water_score": w_sc,
+                "profit_score": calibrated_profit_score,
+                "nitrogen_soil_score": n_sc,
+                "consumo_agua_base_mm": round(float(v["consumo_agua_mm"]), 1),
+                "agua_consumida_3a_m3": agua_3a_m3,
+                "ahorro_agua_vs_actual_m3": ahorro_m3,
+                "ahorro_agua_vs_actual_litros": ahorro_litros,
+                "utilidad_neta_3a_mxn": round(utilidad_3a, 2),
+                "diferencia_dinero_vs_actual_mxn": diff_dinero,
+                "ahorro_fertilizante_3a_mxn": round(ahorro_fert, 2),
+                "meses_suelo_protegido_36": meses_prot,
+                "semaforo_sequia": drought_light,
+                "semaforo_heladas": frost_light,
+                "semaforo_plagas": ev["semaforo_plagas"],
+                "municipios_coahuila": v["municipios_coahuila"],
+                "fuente_oficial": v["fuente_oficial"],
+                "resumen_escenario": resumen,
+            }
+        )
+
+    results.sort(
+        key=lambda r: (r["suitability_score"], r["ahorro_agua_vs_actual_m3"], r["diferencia_dinero_vs_actual_mxn"], r["cultivo"]),
+        reverse=True,
+    )
+    for idx, row in enumerate(results, start=1):
+        row["ranking"] = idx
+
+    return results

@@ -549,21 +549,21 @@
       </section>
 
       <!-- ==========================================
-           PASO 6: TUS OPCIONES DE ROTACIÓN (DE LO BUENO A LO ÓPTIMO)
+           PASO 6: TUS 5 OPCIONES DE ROTACIÓN (DE LA #5 A LA #1 ÓPTIMA)
       =========================================== -->
       <section id="step-6" data-step="6" class="wizard-step hidden space-y-4">
         <div>
           <span class="text-[11px] font-bold uppercase tracking-wider text-[#15803D]">Paso 6 de 6 · Plan a 3 años</span>
-          <h2 class="font-display font-extrabold text-xl text-slate-900 mt-0.5">Tus rotaciones</h2>
+          <h2 class="font-display font-extrabold text-xl text-slate-900 mt-0.5">Tus 5 rotaciones</h2>
           <p class="text-xs text-slate-600 mt-0.5">
-            Año 1 sin cambios; rotación en los Años 2 y 3.
+            Ordenadas de menor a mayor afinidad: de la alternativa #5 hasta la Mejor Opción (#1) al final.
           </p>
         </div>
 
-        <!-- Contenedor de las 2 soluciones ordenadas: 1) Primera Alternativa, 2) Mejor Opción para tu Parcela -->
+        <!-- Contenedor de las 5 soluciones ordenadas: de la #5 arriba hasta la #1 Mejor Opción abajo -->
         <div id="plans" class="space-y-5"></div>
 
-        <!-- Botón Final: Exportar Plan para Campo -->
+        <!-- Botones Finales: Exportar Plan PDF (Top 5) y Excel Completo (168 cultivos) -->
         <div class="card text-white space-y-3">
           <div class="flex items-start gap-3">
             <div class="w-6 h-6 flex items-center justify-center shrink-0">
@@ -571,13 +571,20 @@
             </div>
             <div>
               <h3 class="font-display font-bold text-sm">Llévalo al campo</h3>
-              <p class="text-xs text-emerald-100/80 mt-0.5">Hoja lista para imprimir o guardar en PDF.</p>
+              <p class="text-xs text-emerald-100/80 mt-0.5">Hoja ejecutiva Top 5 para PDF o tabla completa evaluando los 168 cultivos oficiales en tu parcela.</p>
             </div>
           </div>
-          <button id="btn-export" type="button" class="w-full py-3.5 px-4 rounded-xl bg-white text-[#0F5132] font-display font-extrabold text-sm flex items-center justify-center gap-2 shadow-sm hover:bg-emerald-50">
-            <i data-lucide="printer" class="w-4 h-4"></i>
-            <span>Exportar plan (PDF)</span>
-          </button>
+          <div class="grid grid-cols-1 gap-2.5">
+            <button id="btn-export" type="button" class="w-full py-3.5 px-4 rounded-xl bg-white text-[#0F5132] font-display font-extrabold text-sm flex items-center justify-center gap-2 shadow-sm hover:bg-emerald-50">
+              <i data-lucide="printer" class="w-4 h-4"></i>
+              <span>Exportar plan Top 5 (PDF)</span>
+            </button>
+            <button id="btn-export-excel" type="button" class="w-full py-3.5 px-4 rounded-xl font-display font-extrabold text-sm flex items-center justify-center gap-2 transition">
+              <i data-lucide="file-spreadsheet" class="w-4 h-4"></i>
+              <span>Descargar Excel completo (168 cultivos)</span>
+            </button>
+          </div>
+          <p id="export-excel-status" class="text-[11px] text-emerald-100/75 hidden"></p>
         </div>
       </section>
 
@@ -656,6 +663,7 @@
   <script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@turf/turf@6/turf.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-  <script src="/static/app.js?v=minimal3"></script>
+  <script src="/static/offline_engine.js?v=minimal4"></script>
+  <script src="/static/app.js?v=minimal4"></script>
 </body>
 </html>
